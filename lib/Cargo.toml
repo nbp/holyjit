@@ -1,0 +1,12 @@
+[package]
+name = "holyjit_lib"
+version = "0.0.0"
+authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
+
+[dependencies]
+libc = "0.2"
+
+[lib]
+name = "holyjit_lib"
+path = "src/lib.rs"
+

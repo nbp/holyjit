@@ -1,0 +1,12 @@
+[package]
+name = "holyjit_plugin"
+version = "0.0.0"
+authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
+
+[dependencies]
+holyjit_lib = { path = "../lib" }
+
+[lib]
+name = "holyjit_plugin"
+path = "src/lib.rs"
+plugin = true

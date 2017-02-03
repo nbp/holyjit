@@ -1,0 +1,17 @@
+[package]
+name = "holyjit"
+version = "0.0.0"
+authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
+
+[workspace]
+members = [
+  "lib",
+  "plugin"
+]
+
+[dependencies]
+holyjit_lib = { path = "./lib" }
+holyjit_plugin = { path = "./plugin" }
+
+[[example]]
+name = "brainfuck"
