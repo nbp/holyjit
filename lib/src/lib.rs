@@ -1,68 +1,22 @@
-// TODO: Use #![feature(fn_traits)] once this accepted in the compiler, as this would allow to move
-// the call in an Fn<Args, Output> trait for the ExecutableMemory, making it callable.
+// TODO: Use #![feature(fn_traits)] once this accepted in the compiler, as
+// this would allow to move the call in an Fn<Args, Output> trait for the
+// ExecutableMemory, making it callable.
 
 #![feature(associated_type_defaults)]   // Used for adding a type Output to HolyJitFn
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 
-extern crate libc;
-use std::io;
-use std::ptr;
-use std::mem;
+// For dynasm plugin.
+#![feature(plugin)]
+#![plugin(dynasm)]
+
 pub use std::marker::PhantomData;
 
-/// This structure is made to map a single function with a given prototype on one memory page.
-pub struct ExecutableMemory<Args, Output> {
-    ptr: *mut libc::c_void,
-    len: usize,
-    _fun_type: PhantomData<fn(Args) -> Output>,
-}
+#[macro_use]
+extern crate dynasmrt;
 
-impl<Args, Output> ExecutableMemory<Args, Output> {
-    pub fn new(bytes: Vec<u8>) -> ExecutableMemory<Args, Output>  {
-        let page_size = unsafe {
-            libc::sysconf(libc::_SC_PAGESIZE) as usize
-        };
-        let len = ((bytes.len() - 1) | (page_size - 1)) + 1;
-        let ptr = unsafe {
-            libc::mmap(ptr::null_mut(),
-                       len as libc::size_t,
-                       libc::PROT_READ | libc::PROT_WRITE,
-                       libc::MAP_PRIVATE | libc::MAP_ANON,
-                       -1,
-                       0)
-        };
-        if ptr == libc::MAP_FAILED {
-            panic!("mmap failed: {}", io::Error::last_os_error());
-        }
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
-            libc::mprotect(ptr, len, libc::PROT_READ | libc::PROT_EXEC);
-        };
-        ExecutableMemory {
-            ptr: ptr,
-            len: len,
-            _fun_type: PhantomData,
-        }
-    }
-    pub fn call(&self, args: Args) -> Output {
-        let fun : fn(Args) -> Output = unsafe {
-            mem::transmute(self.ptr)
-        };
-        fun(args)
-    }
-}
-
-impl<Args, Output>  Drop for ExecutableMemory<Args, Output>  {
-    fn drop(&mut self) {
-        let err = unsafe {
-            libc::munmap(self.ptr, self.len)
-        };
-        if err == -1 {
-            panic!("munmap failed: {}", io::Error::last_os_error());
-        }
-    }
-}
+pub mod lir;
+mod compile;
 
 /// This trait should be implemented by every function that we want to be able to Jit. This trait
 /// implements the Fn trait to make this function callable, and to make it a potential entry point
@@ -232,15 +186,6 @@ macro_rules! jit {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ret10_x86_64() {
-        let fun = ExecutableMemory::<(), u64>::new(vec![
-            0x48, 0xc7, 0xc0, 0x0a, 0x00, 0x00, 0x00, // mov $rax, 10
-            0xc3                                      // ret
-        ]);
-        assert_eq!(fun.call(()), 10);
-    }
 
     // Add wrappers for the test functions, and check that we can call them
     // without any syntax overhead.
