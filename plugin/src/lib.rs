@@ -17,6 +17,9 @@ use rustc::hir::def_id::DefId;
 use rustc_plugin::Registry;
 use std::rc::Rc;
 
+extern crate holyjit_lib;
+mod trans;
+
 // This plugin works in 3 steps:
 //  - Collect classes which are implementing a specific holyjit library trait, added by one of the
 //    Macro of the holyjit library.  From these pieces of code, find the location of the function
@@ -47,6 +50,9 @@ enum Error {
     /// We found a cast operator, but it does not contain a constant.
     FunctionIsNotAvailable,
 
+    /// We fail while converting the Mir into the Lir.
+    UnableToConvert,
+
     /// While replacing the array types, we found an array with a bad type,
     /// which does not match what is introduced by the jit! macro.
     UnexpectedArrayType,
@@ -59,6 +65,14 @@ enum Error {
     /// While replacing the array content, we did not found any local with
     /// the matching type.
     NoArrayDefinition,
+}
+
+impl From<trans::Error> for Error {
+    fn from(err: trans::Error) -> Error {
+        println!("error: {:?}", err);
+        // All errors are converted into this one.
+        Error::UnableToConvert
+    }
 }
 
 struct AttachJitGraph<'a, 'tcx: 'a> {
@@ -164,7 +178,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
     fn serialize_mir(&self, fn_id: DefId, src_info: mir::SourceInfo) -> Result<Vec<u8>, Error> {
 
         let fn_mir = ty::queries::optimized_mir::try_get(self.tcx, src_info.span, fn_id);
-        let _fn_mir = match fn_mir {
+        let fn_mir = match fn_mir {
             Ok(ref callee_mir) => {
                 // We are not supposed to have generics at the moment, thus
                 // no need to carry a substitution list and substitute them
@@ -175,7 +189,8 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             _ => return Err(Error::FunctionIsNotAvailable),
         };
 
-        Ok(vec![0,1,2,3,4,5,6,7,8,9])
+        let trans = trans::Transpiler::new(self.tcx);
+        Ok(trans.convert(fn_id, fn_mir)?)
     }
 
     /// The placeholder should have a constant array of u8, which is

@@ -104,17 +104,18 @@ have a running JIT compiler.
 As of today, HolyJit contains a draft of what the interface might look like,
 and is not able to generate any code yet.
 
-[ ] Create Rust library
-- [x] Add a way call either a dynamically compiled function or a statically
-  compiled function.
-- [x] Add a `jit!` macro, to make calls transparents, from the usage point
-  of view.
-- [ ] Create a graph representation.
-- [ ] Consume the graph to generate code.
-- [x] Allocate pages and map them as executable.
+- [ ] Create Rust library
+  - [x] Add a way call either a dynamically compiled function or a statically
+    compiled function.
+  - [x] Add a `jit!` macro, to make calls transparents, from the usage point
+    of view.
+  - [ ] Create a graph representation.
+  - [ ] Consume the graph to generate code.
+  - [x] Allocate pages and map them as executable.
 
-[ ] Create a Mir plugin
-- [x] Detect location which have to be patched.
-- [x] Find functions which have to be converted.
-- [ ] Convert the Mir (from the Rust compiler) to the library graph representation.
-- [x] Inject a generated vector in the binary content.
+- [ ] Create a Mir plugin
+  - [x] Detect location which have to be patched.
+  - [x] Find functions which have to be converted.
+  - [ ] Convert the Mir (from the Rust compiler) to the library graph representation.
+  - [x] Inject a generated vector in the binary content.
+  - [ ] Copy static variable references.
