@@ -53,18 +53,17 @@ enum Error {
     /// We fail while converting the Mir into the Lir.
     UnableToConvert,
 
-    /// While replacing the array types, we found an array with a bad type,
-    /// which does not match what is introduced by the jit! macro.
-    UnexpectedArrayType,
     /// While replacing the array types, we found an array with a bad
     /// length, which does not match what is introduced by the jit! macro.
     UnexpectedArrayLen,
-    /// While replacing the array types, we expected to find a single local
-    /// with the array type, instead of a reference to it.
+    /// While replacing the array/tuple types, we expected to find a single
+    /// local with the array type, instead of a reference to it.
     MultipleArrayDefinitions,
-    /// While replacing the array content, we did not found any local with
+    MultipleTupleDefinitions,
+    /// While replacing the array/tuple content, we did not found any local with
     /// the matching type.
     NoArrayDefinition,
+    NoTupleDefinition,
 }
 
 impl From<trans::Error> for Error {
@@ -197,7 +196,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
     /// supposed to be binary serialization of the converted Mir graph. This
     /// function replaces the type of the locals to match the type of size
     /// of the vector, and copy the content of the vector on the Mir graph.
-    fn attach_on_placeholder(&self, mir: &mut Mir<'tcx>, bytes: Vec<u8>) -> Result<(), Error> {
+    fn replace_bytes(&self, mir: &mut Mir<'tcx>, bytes: Vec<u8>) -> Result<(), Error> {
 
         // This Loop ierates over all local types, and replace the [u8; 1]
         // and &[u8; 1] by [u8; x] and &[u8; x] where x corresponds to the
@@ -212,10 +211,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             let arr_ty = match mir.local_decls[idx].ty.sty {
                 ty::TypeVariants::TyRef(ref region, ref tam) => {
                     match tam.ty.sty {
-                        ty::TypeVariants::TyArray(t, l) => {
-                            if t != self.tcx.types.u8 {
-                                return Err(Error::UnexpectedArrayType)
-                            }
+                        ty::TypeVariants::TyArray(t, l) if t == self.tcx.types.u8 => {
                             if l != 1 {
                                 return Err(Error::UnexpectedArrayLen)
                             }
@@ -228,10 +224,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                         _ => None,
                     }
                 },
-                ty::TypeVariants::TyArray(t, l) => {
-                    if t != self.tcx.types.u8 {
-                        return Err(Error::UnexpectedArrayType)
-                    }
+                ty::TypeVariants::TyArray(t, l) if t == self.tcx.types.u8 => {
                     if l != 1 {
                         return Err(Error::UnexpectedArrayLen)
                     }
@@ -296,6 +289,172 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         Ok(())
     }
 
+    /// Symbols referenced by the functions need to be patched by the static
+    /// compiler, but we do not know yet with which value.
+    ///
+    /// The placeholder has a "defs" field which is a tuple coerced into a
+    /// "*const()", which contains all the values that have to be known by
+    /// the compiler. When decoding the bytes, the compiler will recover an
+    /// offset of this pointer, and reinterpret these data in the generated
+    /// code.
+    ///
+    /// This function replace the placeholder tuple by the actual tuple
+    /// which contains all the references to other functions, slices, and
+    /// constants. It also updates the type to be consistent with the type
+    /// of the referenced content.
+    ///
+    /// All operands are supposed to be:
+    ///   Operand::Consume(box Lvalue::Static(box Static{ def_id, ty }))
+    fn replace_defs(&self, mir: &mut Mir<'tcx>, operands: Vec<mir::Operand<'tcx>>) -> Result<(), Error> {
+        // Copy the types extracted from the static operands.
+        let tys : Vec<_> = operands.iter().map(
+            |o| if let &mir::Operand::Consume(mir::Lvalue::Static(ref x)) = o {
+                x.ty.clone()
+            } else {
+                unreachable!("Vecotr of static operands should only contain statics.")
+            }
+        ).collect();
+
+        // Create a tuple type with the types of all the operands.
+        let tup_ty = self.tcx.intern_tup(&tys, false);
+
+        // Replace the following type patterns, with the equivalent tuple
+        // with the types of the operands:
+        //    (u8, u8)
+        //    &(u8, u8)
+        //    *const (u8, u8)
+        //
+        // This loop also record the local index with the type (u8; u8), in
+        // order to replace the its value, by a tuple build with the
+        // previous list of operands.
+        let mut tup_local : Option<mir::Local> = None;
+        let mut coerce_locals : Vec<mir::Local> = Vec::default();
+        let mut coerce_ty : Option<_> = None;
+        let locals : Vec<_> = mir.temps_iter().collect();
+        for idx in locals {
+            let ty = match mir.local_decls[idx].ty.sty {
+                ty::TypeVariants::TyRef(ref region, ref tam) => {
+                    match tam.ty.sty {
+                        ty::TypeVariants::TyTuple(ref slice, _)
+                            if slice.len() == 2
+                            && slice[0] == self.tcx.types.u8
+                            && slice[1] == self.tcx.types.u8 =>
+                        {
+                            let ref_ty = ty::TypeVariants::TyRef(*region, ty::TypeAndMut{
+                                ty: tup_ty, ..*tam
+                            });
+                            Some(self.tcx.mk_ty(ref_ty))
+                        }
+                        _ => None,
+                    }
+                },
+                ty::TypeVariants::TyRawPtr(ref tam) => {
+                    match tam.ty.sty {
+                        ty::TypeVariants::TyTuple(ref slice, _)
+                            if slice.len() == 2
+                            && slice[0] == self.tcx.types.u8
+                            && slice[1] == self.tcx.types.u8 =>
+                        {
+                            // One of the local is a cast, we should be
+                            // consistent and convert the cast operand too.
+                            coerce_locals.push(idx);
+                            if coerce_ty == None {
+                                let ptr_ty = ty::TypeVariants::TyRawPtr(ty::TypeAndMut{
+                                    ty: tup_ty, ..*tam
+                                });
+                                coerce_ty = Some(self.tcx.mk_ty(ptr_ty));
+                            }
+                            coerce_ty
+                        }
+                        _ => None,
+                    }
+                },
+                ty::TypeVariants::TyTuple(ref slice, _)
+                    if slice.len() == 2
+                    && slice[0] == self.tcx.types.u8
+                    && slice[1] == self.tcx.types.u8 =>
+                {
+                    if tup_local != None {
+                        return Err(Error::MultipleTupleDefinitions)
+                    }
+                    tup_local = Some(idx);
+                    Some(tup_ty)
+                },
+                _ => None,
+            };
+
+            if let Some(ty) = ty {
+                mir.local_decls[idx].ty = ty;
+            }
+        }
+
+        let tup_local = match tup_local {
+            Some(l) => l,
+            None => return Err(Error::NoTupleDefinition)
+        };
+
+        // Create operands for each element of the vector.
+        let mk_literal = |i| mir::Literal::Value{ value: ConstVal::Integral(ConstInt::U8(i)) };
+        let mk_operand = |cst: &mir::Constant<'tcx>, i| mir::Operand::Constant(Box::new(
+            mir::Constant{ literal: mk_literal(i), ..cst.clone() }));
+
+        // Find the statement which contains the assignment to tup_local,
+        // and change its rvalue to be a tuple which contains the statics
+        // operands given as argument.
+        'cst_tuple: for block in mir.basic_blocks().indices() {
+            let data = &mut mir[block];
+            for statement in &mut data.statements {
+                match *statement {
+                    // replace the constant tuple.
+                    mir::Statement { kind: mir::StatementKind::Assign(
+                        mir::Lvalue::Local(assign_local),
+                        mir::Rvalue::Aggregate(_, _)
+                    ), ..}
+                    if assign_local == tup_local => {
+                        ()
+                    },
+                    _ => continue,
+                };
+
+                statement.kind = mir::StatementKind::Assign(
+                    mir::Lvalue::Local(tup_local),
+                    mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Tuple),
+                                           operands)
+                );
+                break 'cst_tuple;
+            }
+        }
+
+        // Find the cast operation, and replace the type used as argument of
+        // the cast.
+        'cast: for block in mir.basic_blocks().indices() {
+            let data = &mut mir[block];
+            for statement in &mut data.statements {
+                let mut replace = None;
+                match *statement {
+                    // Replace the cast type.
+                    mir::Statement { kind: mir::StatementKind::Assign(
+                        mir::Lvalue::Local(assign_local),
+                        mir::Rvalue::Cast(ref ck, ref op, _)
+                    ), ..}
+                    if coerce_locals.contains(&assign_local) => {
+                        replace = Some(mir::StatementKind::Assign(
+                            mir::Lvalue::Local(assign_local),
+                            mir::Rvalue::Cast(ck.clone(), op.clone(), coerce_ty.unwrap())
+                        ));
+                    },
+
+                    _ => continue,
+                };
+
+                statement.kind = replace.unwrap();
+                break 'cast;
+            }
+        }
+
+        Ok(())
+    }
+
     ///
     fn run_pass(&self, mir: &mut Mir<'tcx>) {
         // Step 1: Filter all references to holyjit data structures.
@@ -321,8 +480,11 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
 
         // Step 4: Replace the constant array of the HolyJit data structure
         // by one which contains the serialized graph.
-        self.attach_on_placeholder(mir, bytes).unwrap_or_else(|e|
+        self.replace_bytes(mir, bytes).unwrap_or_else(|e|
             panic!("Fail to attach the serialized function: {:?}", e),
+        );
+        self.replace_defs(mir, vec![]).unwrap_or_else(|e|
+            panic!("Fail to attach static references: {:?}", e),
         );
     }
 }

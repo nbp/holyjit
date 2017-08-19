@@ -105,9 +105,24 @@ pub trait HolyJitFn<Args, Output> {
 /// The last parameter T corresponds to the structure which is wrapping the
 /// function pointer. This structure should implement the HolyJitFn trait.
 pub struct HolyJitFnWrapper<Args, Output, T: HolyJitFn<Args, Output>>{
+    /// Reference to the statically compiled function.
     pub fun: T,
-    #[allow(dead_code)]
+
+    /// Serialized LIR graph, of the statically compiled function.
     pub bytes: &'static [u8],
+
+    /// Statically compiled function might contain references to other
+    /// symbols. At the time of the plugin compilation, we do not know what
+    /// these symbols addresses would be, as they would be decided by LLVM
+    /// assembler, and the dynamic-linker.
+    ///
+    /// To carry this information, we use a tuple, as not all symbols have
+    /// the same type. Moreover, there is no single cast target possible for
+    /// all. The previous vector of bytes, thus know how to interpret the
+    /// content of this pointer.
+    pub defs: *const (),
+
+    // Keep track of the types.
     pub _proto: PhantomData<HolyJitFn<Args, Output>>
 }
 
@@ -162,8 +177,9 @@ macro_rules! jit {
         // technique to avoid conflicting hard-coded names.
         #[allow(non_upper_case_globals)]
         const $fun : $crate::HolyJitFnWrapper<fn_ty!{$($typ),*}, $ret_type, $fun> = $crate::HolyJitFnWrapper{
-            fun : $fun{ curry: curry!{ ($($typ),*) -> $ret_type = $delegate } },
+            fun   : $fun{ curry: curry!{ ($($typ),*) -> $ret_type = $delegate } },
             bytes : &[ 0 /* placeholder for holyjit plugin */ ],
+            defs  : &(1u8, 2u8) as *const _ as *const (),
             _proto: $crate::PhantomData,
         };
         #[allow(non_camel_case_types)]

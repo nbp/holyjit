@@ -1,7 +1,7 @@
 /// This module converts the rustc::mir into a holyjit::lir.
 
 use rustc::ty::{self, TyCtxt};
-use rustc::mir::{Mir, self};
+use rustc::mir;
 use rustc::hir::def_id::DefId;
 
 use holyjit_lib::lir;
@@ -23,6 +23,11 @@ struct Local<'tcx> {
     idx: mir::Local,
     layout: &'tcx ty::layout::Layout,
     off: usize,
+}
+
+#[derive(Debug)]
+enum LvalueContext {
+    Assign, Projection, Ref, Len, Consume,
 }
 
 // TODO: Remove Error suffix.
@@ -155,7 +160,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     fn statement(&mut self, statement: &mir::Statement<'tcx>) -> Result<(), Error> {
         match statement.kind {
             mir::StatementKind::Assign(ref lvalue, ref rvalue) => {
-                self.lvalue(lvalue).or_else(
+                self.lvalue(lvalue, LvalueContext::Assign).or_else(
                     report_nyi!("StatementKind::Assign({:?}, _)", lvalue))?;
                 self.rvalue(rvalue).or_else(
                     report_nyi!("StatementKind::Assign(_, {:?})", rvalue))?;
@@ -177,7 +182,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         }
     }
 
-    fn lvalue(&mut self, lvalue: &mir::Lvalue<'tcx>) -> Result<(), Error> {
+    fn lvalue(&mut self, lvalue: &mir::Lvalue<'tcx>, ctx: LvalueContext) -> Result<(), Error> {
         match *lvalue {
             mir::Lvalue::Local(index) => {
                 Ok(()) // TODO
@@ -190,6 +195,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 // Thus we have to fake a content of the same type, and in
                 // the place-holder structure added by the jit! macro, add a
                 // new reference to static variables.
+                println!("Lvalue::Static(def_id: {:?}, ty: {:?}) within {:?}", def.def_id,  def.ty, ctx);
 
                 Ok(()) // TODO
             }
@@ -203,7 +209,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     fn lvalue_projection(&mut self, proj: &mir::LvalueProjection<'tcx>) -> Result<(), Error> {
         // Projection<'tcx, Lvalue<'tcx>, Operand<'tcx>, Ty<'tcx>>
         let mir::Projection { ref base, ref elem } = *proj;
-        self.lvalue(base)?;
+        self.lvalue(base, LvalueContext::Projection)?;
         match *elem {
             mir::ProjectionElem::Deref => {
                 Ok(()) // TODO
@@ -231,12 +237,12 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 Ok(()) // TODO
             }
             mir::Rvalue::Ref(_, _, ref lvalue) => {
-                self.lvalue(lvalue).or_else(
+                self.lvalue(lvalue, LvalueContext::Ref).or_else(
                     report_nyi!("mir::Rvalue::Ref(_, _, {:?})", lvalue))?;
                 Ok(()) // TODO
             }
             mir::Rvalue::Len(ref lvalue) => {
-                self.lvalue(lvalue).or_else(
+                self.lvalue(lvalue, LvalueContext::Len).or_else(
                     report_nyi!("mir::Rvalue::Len({:?})", lvalue))?;
                 Ok(()) // TODO
             }
@@ -276,7 +282,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     fn operand(&mut self, operand: &mir::Operand<'tcx>) -> Result<(), Error> {
         match *operand {
             mir::Operand::Consume(ref lvalue) => {
-                self.lvalue(lvalue).or_else(
+                self.lvalue(lvalue, LvalueContext::Consume).or_else(
                     report_nyi!("mir::Operand::Consume(({:?})", lvalue))?;
                 Ok(()) // TODO
             }
