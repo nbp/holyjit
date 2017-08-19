@@ -16,7 +16,10 @@ pub use std::marker::PhantomData;
 extern crate dynasmrt;
 
 pub mod lir;
+mod context;
 mod compile;
+
+pub use context::JitContext;
 
 /// This trait should be implemented by every function that we want to be able to Jit. This trait
 /// implements the Fn trait to make this function callable, and to make it a potential entry point
@@ -95,12 +98,12 @@ curry_decl!{ Curry4<(A0,A1,A2,A3) -> Output>  }
 /// statically compiled by rustc, or the result of the compilation performed
 /// by HolyJit.
 pub trait HolyJitFn<Args, Output> {
-    // fn get_fn(&self) -> fn(Args) -> Output; // single argument function :/
     fn get_fn(&self) -> &Fn<Args, Output = Output>;
+    fn get_jc<'a>(&self, args: &'a Args) -> &'a JitContext;
 }
 
 /// Structure made for wrapping both the function pointer and the serialized
-/// bytes of the MIR graph.  The first parameter defines the tuple of
+/// bytes of the LIR graph.  The first parameter defines the tuple of
 /// arguments type, and the second parameter defines Output of the function.
 /// The last parameter T corresponds to the structure which is wrapping the
 /// function pointer. This structure should implement the HolyJitFn trait.
@@ -126,23 +129,43 @@ pub struct HolyJitFnWrapper<Args, Output, T: HolyJitFn<Args, Output>>{
     pub _proto: PhantomData<HolyJitFn<Args, Output>>
 }
 
+impl<Args, Output, T : HolyJitFn<Args, Output>> HolyJitFnWrapper<Args, Output, T> {
+    /// Given a list of argument, extract a JitContext from it, and look for
+    /// existing compiled code.  Otherwise, either return the static
+    /// function, or the newly JIT compiled function.
+    fn select_fn(&self, args: &Args) -> &Fn<Args, Output = Output> {
+        let jc = self.fun.get_jc(args);
+        let _ = jc.lookup(self.bytes, self.defs);
+        self.fun.get_fn()
+    }
+}
+
 impl<Args, Output, T : HolyJitFn<Args, Output>> FnOnce<Args> for HolyJitFnWrapper<Args, Output, T> {
     type Output = Output;
     extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.fun.get_fn().call_once(args)
-        // (self.fun.get_fn())(args)
+        let f = {
+            let ra = &args;
+            self.select_fn(ra)
+        };
+        f.call_once(args)
     }
 }
 impl<Args, Output, T : HolyJitFn<Args, Output>> FnMut<Args> for HolyJitFnWrapper<Args, Output, T> {
     extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.fun.get_fn().call_mut(args)
-        // (self.fun.get_fn())(args)
+        let mut f = {
+            let ra = &args;
+            self.select_fn(ra)
+        };
+        f.call_mut(args)
     }
 }
 impl<Args, Output, T : HolyJitFn<Args, Output>> Fn<Args> for HolyJitFnWrapper<Args, Output, T> {
     extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.fun.get_fn().call(args)
-        // (self.fun.get_fn())(args)
+        let f = {
+            let ra = &args;
+            self.select_fn(ra)
+        };
+        f.call(args)
     }
 }
 
@@ -161,6 +184,13 @@ macro_rules! curry {
     (($a0:ty,$a1:ty,$a2:ty,$a3:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry4{ fun: $e } };
 }
 
+#[macro_export]
+macro_rules! match_ref_args {
+    () => { () };
+    ($a0:ident) => { (ref $a0,) };
+    ($a0:ident,$($as:ident),*) => { (ref $a0,$(ref $as),*)  };
+}
+
 // TODO: Add support arguments, and their types: $($arg_name:ident: $arg_type:ty),* ?
 
 /// The jit! macro is used to define function which is compiled statically
@@ -169,7 +199,9 @@ macro_rules! curry {
 /// signature.
 #[macro_export]
 macro_rules! jit {
-    (fn $fun:ident ($($arg:ident: $typ:ty),*) -> $ret_type:ty = $delegate:ident) => {
+    (fn $fun:ident ($($arg:ident: $typ:ty),*) -> $ret_type:ty = $delegate:ident
+     in $jc:expr ;
+    ) => {
         // WARNING: The $fun identifier is used both for the struct name,
         // which holds the graph representation of the $delegate function,
         // and for the constant of type HolyJitFnWrapper. As there is no
@@ -186,14 +218,16 @@ macro_rules! jit {
         struct $fun { curry: curry!{ ($($typ),*) -> $ret_type } }
         impl $crate::HolyJitFn<fn_ty!{$($typ),*}, $ret_type> for $fun {
             fn get_fn(&self) -> &Fn<fn_ty!{$($typ),*}, Output = $ret_type> {
-                // TODO: Replace this line by an argument with a JitContext,
-                // which can be used to map a graph to a given compilation.
-                // Also, add a function which converts the given set of
-                // arguments into a JitContext.
-
-                // use std::sync::{Arc, Mutex};
-                // static mut choice: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
+                // Return the statically compiled function.
                 &self.curry
+            }
+            fn get_jc<'a>(&self, args: &'a fn_ty!{$($typ),*}) -> &'a $crate::JitContext {
+                // Use a match statement to fake the arguments bindings of
+                // the function.
+                #[allow(unused_variables)]
+                match args {
+                    &match_ref_args!{$($arg),*} => $jc
+                }
             }
         }
     }
@@ -204,20 +238,41 @@ mod tests {
     use super::*;
 
     // Add wrappers for the test functions, and check that we can call them
-    // without any syntax overhead.
-    jit!{ fn test0() -> i32 = test0_impl }
+    // without any syntax overhead. Check that we can use a function to get
+    // the JitContext from a global.
+    jit!{ fn test0() -> i32 = test0_impl in global_jc(); }
     fn test0_impl() -> i32 { 42 }
 
-    jit!{ fn test1(x: i32) -> i32 = test1_impl }
+    jit!{ fn test1(x: i32) -> i32 = test1_impl in global_jc(); }
     fn test1_impl(x: i32) -> i32 { x }
 
-    jit!{ fn test2(x: i32, y: i32) -> i32 = test2_impl }
+    jit!{ fn test2(x: i32, y: i32) -> i32 = test2_impl in global_jc(); }
     fn test2_impl(x: i32, y: i32) -> i32 { x + y }
+
+    // Check that we can use one of the argument to extract a JitContext.
+    jit!{ fn test3(jc: JitContext, x: i32, y: i32) -> i32 = test3_impl in jc; }
+    fn test3_impl(_jc: JitContext, x: i32, y: i32) -> i32 {
+        x + y
+    }
+
+    static mut JC: Option<*const JitContext> = None;
+    fn global_jc() -> &'static JitContext {
+        // Good enough for a test case?
+        unsafe {
+            if JC == None {
+                let jc : Box<JitContext> = Box::new(Default::default());
+                JC = Some(std::mem::transmute(jc));
+            };
+            std::mem::transmute(JC.unwrap())
+        }
+    }
 
     #[test]
     fn check_transparent_wrappers() {
         assert_eq!(test0(), 42);
         assert_eq!(test1(51), 51);
         assert_eq!(test2(21, 21), 42);
+        let jc : JitContext = Default::default();
+        assert_eq!(test3(jc, 21, 21), 42);
     }
 }

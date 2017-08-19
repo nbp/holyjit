@@ -4,10 +4,9 @@
 
 #[macro_use] extern crate holyjit_lib as hj;
 
-struct JitContext;
 
-jit!{ fn eval(jc: JitContext, program: String) -> Result<(), ()> = eval_impl }
-fn eval_impl(_jc: JitContext, program: String) -> Result<(), ()> {
+jit!{ fn eval(jc: hj::JitContext, program: String) -> Result<(), ()> = eval_impl in jc; }
+fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
     let prog = program.as_bytes();
     let mut pc : usize = 0;
     let mut val : u8 = 0;
@@ -61,6 +60,6 @@ fn eval_impl(_jc: JitContext, program: String) -> Result<(), ()> {
 }
 
 fn main() {
-    let jc = JitContext{};
+    let jc : hj::JitContext = Default::default();
     eval(jc, "".into()).unwrap()
 }
