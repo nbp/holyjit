@@ -3,6 +3,7 @@
 
 // extern crate syntax;
 extern crate rustc;
+extern crate rustc_data_structures;
 extern crate rustc_const_math;
 extern crate rustc_plugin;
 
@@ -174,7 +175,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
 
     /// This function convert the Mir of the wrapped function into a vector
     /// of serialized graph, which would be deserialized by the Jit library.
-    fn serialize_mir(&self, fn_id: DefId, src_info: mir::SourceInfo) -> Result<Vec<u8>, Error> {
+    fn serialize_mir(&self, fn_id: DefId, src_info: mir::SourceInfo) -> Result<(Vec<u8>, Vec<mir::Rvalue<'tcx>>), Error> {
 
         let fn_mir = ty::queries::optimized_mir::try_get(self.tcx, src_info.span, fn_id);
         let fn_mir = match fn_mir {
@@ -188,8 +189,8 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             _ => return Err(Error::FunctionIsNotAvailable),
         };
 
-        let trans = trans::Transpiler::new(self.tcx);
-        Ok(trans.convert(fn_id, fn_mir)?)
+        let trans = trans::Transpiler::new(self.tcx, fn_id);
+        Ok(trans.convert(fn_mir)?)
     }
 
     /// The placeholder should have a constant array of u8, which is
@@ -303,20 +304,33 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
     /// constants. It also updates the type to be consistent with the type
     /// of the referenced content.
     ///
-    /// All operands are supposed to be:
-    ///   Operand::Consume(box Lvalue::Static(box Static{ def_id, ty }))
-    fn replace_defs(&self, mir: &mut Mir<'tcx>, operands: Vec<mir::Operand<'tcx>>) -> Result<(), Error> {
-        // Copy the types extracted from the static operands.
-        let tys : Vec<_> = operands.iter().map(
-            |o| if let &mir::Operand::Consume(mir::Lvalue::Static(ref x)) = o {
-                x.ty.clone()
-            } else {
-                unreachable!("Vecotr of static operands should only contain statics.")
-            }
-        ).collect();
+    /// All rvalues are supposed to be static:
+    ///   Rvalue::Ref(region, mut, Lvalue::Static(box Static{ def_id, ty }))
+    fn replace_defs(&self, mir: &mut Mir<'tcx>, statics: Vec<mir::Rvalue<'tcx>>) -> Result<(), Error> {
+        // Create references to the extracted static definitions' types.
+        let tys : Vec<_> =
+            statics.iter()
+            // TODO: We need to create a reference to the statics types.
+            .map(|rv| match rv {
+                &mir::Rvalue::Ref(ref region, _, mir::Lvalue::Static(ref st)) => {
+                    // region == tcx.types.re_erased
+                    self.tcx.mk_imm_ref(region.clone(), st.ty)
+                }
+                &mir::Rvalue::Use(mir::Operand::Constant(ref constant)) => {
+                    constant.ty
+                }
+                _ => unreachable!("Unexpected Rvalue: {:?}", rv)
+            })
+            .collect();
 
         // Create a tuple type with the types of all the operands.
         let tup_ty = self.tcx.intern_tup(&tys, false);
+
+        // Create a list of locals definitions to be added into the graph.
+        let local_decls : Vec<_> =
+            tys.iter()
+            .map(|ty| mir::LocalDecl::new_temp(ty, Default::default()))
+            .collect();
 
         // Replace the following type patterns, with the equivalent tuple
         // with the types of the operands:
@@ -393,17 +407,15 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             None => return Err(Error::NoTupleDefinition)
         };
 
-        // Create operands for each element of the vector.
-        let mk_literal = |i| mir::Literal::Value{ value: ConstVal::Integral(ConstInt::U8(i)) };
-        let mk_operand = |cst: &mir::Constant<'tcx>, i| mir::Operand::Constant(Box::new(
-            mir::Constant{ literal: mk_literal(i), ..cst.clone() }));
-
         // Find the statement which contains the assignment to tup_local,
-        // and change its rvalue to be a tuple which contains the statics
-        // operands given as argument.
-        'cst_tuple: for block in mir.basic_blocks().indices() {
-            let data = &mut mir[block];
-            for statement in &mut data.statements {
+        // and the statement which cast a value into a typed tuple pointer.
+        let mut insert_block = None;
+        let mut tuple_idx = None;
+        let mut cast_idx = None;
+        let mut cast_rep = None;
+        'find: for block in mir.basic_blocks().indices() {
+            let data = &mir[block];
+            for (st_idx, statement) in data.statements.iter().enumerate() {
                 match *statement {
                     // replace the constant tuple.
                     mir::Statement { kind: mir::StatementKind::Assign(
@@ -411,34 +423,16 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                         mir::Rvalue::Aggregate(_, _)
                     ), ..}
                     if assign_local == tup_local => {
-                        ()
+                        tuple_idx = Some(st_idx);
                     },
-                    _ => continue,
-                };
-
-                statement.kind = mir::StatementKind::Assign(
-                    mir::Lvalue::Local(tup_local),
-                    mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Tuple),
-                                           operands)
-                );
-                break 'cst_tuple;
-            }
-        }
-
-        // Find the cast operation, and replace the type used as argument of
-        // the cast.
-        'cast: for block in mir.basic_blocks().indices() {
-            let data = &mut mir[block];
-            for statement in &mut data.statements {
-                let mut replace = None;
-                match *statement {
                     // Replace the cast type.
                     mir::Statement { kind: mir::StatementKind::Assign(
                         mir::Lvalue::Local(assign_local),
                         mir::Rvalue::Cast(ref ck, ref op, _)
                     ), ..}
                     if coerce_locals.contains(&assign_local) => {
-                        replace = Some(mir::StatementKind::Assign(
+                        cast_idx = Some(st_idx);
+                        cast_rep = Some(mir::StatementKind::Assign(
                             mir::Lvalue::Local(assign_local),
                             mir::Rvalue::Cast(ck.clone(), op.clone(), coerce_ty.unwrap())
                         ));
@@ -447,10 +441,89 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                     _ => continue,
                 };
 
-                statement.kind = replace.unwrap();
-                break 'cast;
+                match (tuple_idx, cast_idx) {
+                    (Some(_), Some(_)) => {
+                        insert_block = Some(block);
+                        break 'find
+                    },
+                    _ => continue
+                }
             }
         }
+
+        // Add temporary locals in the list of locals of the Mir.
+        let local_ids : Vec<_> =
+            local_decls.into_iter()
+            .map(|l| mir.local_decls.push(l))
+            .collect();
+
+        // Create a list of local operands of the tuple.
+        let local_ops : Vec<_> =
+            local_ids.iter()
+            .map(|idx| mir::Operand::Consume(mir::Lvalue::Local(idx.clone())))
+            .collect();
+
+        let mut stmt_before : Vec<_> =
+            local_ids.iter().zip(statics.iter())
+            .fold(vec![],|mut stmts, (idx, rv)| {
+                stmts.push(mir::Statement {
+                    kind: mir::StatementKind::StorageLive(
+                        mir::Lvalue::Local(idx.clone())
+                    ),
+                    source_info: mir::SourceInfo {
+                        span: Default::default(),
+                        scope: mir::ARGUMENT_VISIBILITY_SCOPE,
+                    }
+                });
+                stmts.push(mir::Statement {
+                    kind: mir::StatementKind::Assign(
+                        mir::Lvalue::Local(idx.clone()),
+                        rv.clone()
+                    ),
+                    source_info: mir::SourceInfo {
+                        span: Default::default(),
+                        scope: mir::ARGUMENT_VISIBILITY_SCOPE,
+                    }
+                });
+                stmts
+            });
+
+        let mut stmt_after : Vec<_> =
+            local_ids.iter().fold(vec![], |mut stmts, idx| {
+                stmts.push(mir::Statement {
+                    kind: mir::StatementKind::StorageDead(
+                        mir::Lvalue::Local(idx.clone())
+                    ),
+                    source_info: mir::SourceInfo {
+                        span: Default::default(),
+                        scope: mir::ARGUMENT_VISIBILITY_SCOPE,
+                    }
+                });
+                stmts
+            });
+
+        let insert_block = insert_block.unwrap();
+        let tuple_idx = tuple_idx.unwrap();
+        let cast_idx = cast_idx.unwrap();
+        let cast_rep = cast_rep.unwrap();
+
+        // Cut the list of statements in order to insert statements to
+        // declare each of the elements, and statements to mark the
+        // temporary locals as dead.
+        let data = &mut mir[insert_block];
+        data.statements[tuple_idx].kind =
+            mir::StatementKind::Assign(
+                mir::Lvalue::Local(tup_local),
+                mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Tuple),
+                                       local_ops)
+            );
+        data.statements[cast_idx].kind = cast_rep;
+        let mut head = data.statements.split_off(tuple_idx);
+        let mut tail = head.split_off(1);
+        data.statements.append(&mut stmt_before);
+        data.statements.append(&mut head);
+        data.statements.append(&mut stmt_after);
+        data.statements.append(&mut tail);
 
         Ok(())
     }
@@ -474,7 +547,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
 
         // Step 3: Convert the Mir of function into HolyJit representation
         // and serialize it.
-        let bytes = self.serialize_mir(fn_id, src_info).unwrap_or_else(|e|
+        let (bytes, defs) = self.serialize_mir(fn_id, src_info).unwrap_or_else(|e|
             panic!("Fail to convert the wrapped function: {:?}", e),
         );
 
@@ -483,7 +556,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         self.replace_bytes(mir, bytes).unwrap_or_else(|e|
             panic!("Fail to attach the serialized function: {:?}", e),
         );
-        self.replace_defs(mir, vec![]).unwrap_or_else(|e|
+        self.replace_defs(mir, defs).unwrap_or_else(|e|
             panic!("Fail to attach static references: {:?}", e),
         );
     }

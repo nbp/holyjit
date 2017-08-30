@@ -37,7 +37,7 @@ impl Compiler {
         self.finalize()
     }
 
-    fn compile_block(&mut self, block: &lir::Block) -> Result<(), Error> {
+    fn compile_block(&mut self, block: &lir::BasicBlockData) -> Result<(), Error> {
         for inst in block.insts.iter() {
             self.compile_inst(inst)?
         }
