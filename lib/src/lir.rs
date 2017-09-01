@@ -51,9 +51,6 @@ pub enum Terminator {
 
     /// Call a function. (any function, or an assertion, or a drop function)
     Call {
-        /// A conditional call is used to implement assertion calls.
-        conditional: Option<Reg>,
-
         /// Pointer to a given function.
         function: Reg,
 
@@ -65,7 +62,7 @@ pub enum Terminator {
         /// If the function returns, then the following register would be
         /// defined in the block, and listed in the output_regs of the
         /// current block, and the inputs-regs of the listed block.
-        return_target: Option<(RegDef, BasicBlock)>,
+        return_target: Option<(Option<RegDef>, BasicBlock)>,
 
         /// If the function unwinds then the unwinding resumes in the
         /// following block.,

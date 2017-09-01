@@ -1,9 +1,11 @@
 /// This module converts the rustc::mir into a holyjit::lir.
 
 use rustc::ty::{self, TyCtxt};
+use rustc::ty::subst::Subst;
 use rustc::mir;
 use rustc::hir::def_id::DefId;
 use rustc::middle::const_val::{ConstVal, ConstInt};
+use rustc::middle::lang_items::DropInPlaceFnLangItem;
 use rustc_const_math::ConstUsize;
 use rustc_data_structures::indexed_vec::Idx;
 
@@ -305,7 +307,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     }
 
     fn register_static(&mut self, rvalue: &mir::Rvalue<'tcx>, ty: ty::Ty<'tcx>) -> Result<lir::Imm, Error> {
-        println!("register_static: {:?}", rvalue);
+        println!("register_static: {:?} : {:?}", rvalue, ty);
         self.statics.push(rvalue.clone());
         let bump = self.statics_size;
         let (off, bump) = self.add_type(ty, bump)?;
@@ -832,24 +834,52 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         let InstSeq(mut lv_insts, lv_reg, lv_ty) =
                             self.lvalue(lvalue, LvalueCtx::Address).or_else(
                                 report_nyi!("Call(destination: {:?}, _)", lvalue))?;
-                        // TODO: Record a block entry, which assign the
-                        // output register in the lvalue.
+                        // TODO: Add a new block which is dedicated to
+                        // setting the lvalue with the returned value, while
+                        // forwarding other registers of the current set of
+                        // outputs.
                         let (_, size) = self.add_type(lv_ty, 0)?;
-                        Some(( (lv_reg, size), target ))
+                        Some(( Some((lv_reg, size)), target ))
                     }
                     &None => None,
                 };
 
                 Ok(TermSeq(insts, lir::Terminator::Call {
-                    conditional: None,
                     function: fun_reg,
                     args: args_reg,
                     return_target,
                     unwind_target,
                 }))
             }
-            &mir::TerminatorKind::Drop { .. } => {
-                Ok(TermSeq(vec![], lir::Terminator::Return))  // TODO
+            &mir::TerminatorKind::Drop { ref location, target, unwind } => {
+                let InstSeq(mut lv_insts, lv_reg, lv_ty) =
+                    self.lvalue(location, LvalueCtx::Address).or_else(
+                        report_nyi!("Drop(location: {:?}, _)", location))?;
+
+                // see resolve_drop_in_place
+                let def_id = self.tcx.require_lang_item(DropInPlaceFnLangItem);
+                let substs = self.tcx.intern_substs(&[ty::subst::Kind::from(lv_ty)]);
+                // see def_ty
+                let ty = self.tcx.type_of(def_id).subst(self.tcx, substs);
+
+                // Add the drop_in_place function address as a reference.
+                let rv = mir::Rvalue::Use(
+                    mir::Operand::function_handle(self.tcx, def_id, substs, Default::default()));
+                let off = self.register_static(&rv, ty)?;
+
+                let fun_reg = self.get_new_reg();
+                let mut insts = lv_insts;
+                insts.append(&mut vec![
+                    lir::Inst::Live(fun_reg),
+                    lir::Inst::Static(fun_reg, off),
+                ]);
+
+                Ok(TermSeq(insts, lir::Terminator::Call {
+                    function: fun_reg,
+                    args: vec![lv_reg],
+                    return_target: Some((None, self.get_block(target))),
+                    unwind_target: unwind.map(|ub| self.get_block(ub)),
+                }))
             }
             &mir::TerminatorKind::Assert { .. } => {
                 Ok(TermSeq(vec![], lir::Terminator::Return))  // TODO
