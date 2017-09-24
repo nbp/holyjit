@@ -1,12 +1,17 @@
 //! Defines the LIR structures and how to represent a graph and its
 //! instructions.
+use std::fmt;
 
 /// Prototype of the Mir graph of a single function. This representation is
 /// not optimized for graph optimizations, but optimized only for the ease
 /// of convertion from the MIR and the ease of naive compilation.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CompilationUnit {
     /// Size of all local variable of the Mir.
     pub stack_size: usize,
+
+    /// Ordered list of arguments, with their associated registers.
+    pub args_defs: Vec<RegDef>,
 
     /// List of basic blocks of a given function.
     pub blocks: Vec<BasicBlockData>,
@@ -14,6 +19,9 @@ pub struct CompilationUnit {
 
 /// (Prototype) Set of instruction within a block.
 pub type BasicBlock = usize;
+
+/// Basic block which contains a list of instructions.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct BasicBlockData {
     /// Ordered list of registers available in this basic block.
     //
@@ -29,12 +37,20 @@ pub struct BasicBlockData {
     pub end: Terminator,
 }
 
+/// Basic block terminator instruction, which resume the execution in
+/// another basic block.
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Terminator {
     /// Exit successfully the current function.
-    Return,
+    Return {
+        value: Option<Reg>,
+    },
 
     /// Unwind the current function.
     Unwind,
+
+    /// Trap.
+    Unreachable,
 
     /// Jump unconditionally to the next basic block.
     Goto {
@@ -44,6 +60,7 @@ pub enum Terminator {
     /// Conditional branches, implemented as a switch case to handle all
     /// forms of conditionals.
     SwitchInt {
+        value: Reg,
         range: RangeInclusive,
         targets: Vec<(Imm, BasicBlock)>,
         otherwise: Option<BasicBlock>,
@@ -78,8 +95,11 @@ pub type RangeInclusive = (Imm, Imm);
 
 /// (Prototype) Minimal set of instructions to support the MIR graph of
 /// Rust for the examples directory.
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Inst {
+    // Initialize the frame pointer.
+    SetFramePtr(Reg, Sz, Sz),
+
     // Copy the address of a static value in a register.
     Static(Reg, Imm),
 
@@ -133,4 +153,36 @@ pub enum Inst {
     // Reserve, or kill a register allocation.
     // Note: Live is useless in case of SSA forms.
     Live(Reg), Dead(Reg),
+}
+
+/// Display a Compilation unit with some hard-coded indentation level.
+impl fmt::Display for CompilationUnit {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "CompilationUnit {{\n")?;
+        write!(f, "  stack_size: {:?},\n", self.stack_size)?;
+        write!(f, "  args_defs: {:?},\n", self.args_defs)?;
+        write!(f, "  blocks: [\n")?;
+        let mut x = 0;
+        for b in &self.blocks {
+            write!(f, "    [{}] = {},\n", x, b)?;
+        }
+        write!(f, "  ],\n")?;
+        write!(f, "}}")
+    }
+}
+
+/// Display a BasicBlockData unit with some hard-coded indentation level.
+impl fmt::Display for BasicBlockData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BasicBlockData {{\n")?;
+        write!(f, "      input_regs: {:?},\n", self.input_regs)?;
+        write!(f, "      insts: [\n")?;
+        for ins in &self.insts {
+            write!(f, "        {:?},\n", ins)?;
+        }
+        write!(f, "      ],\n")?;
+        write!(f, "      end: {:?},\n", self.end)?;
+        write!(f, "      output_regs: {:?},\n", self.output_regs)?;
+        write!(f, "    }}")
+    }
 }

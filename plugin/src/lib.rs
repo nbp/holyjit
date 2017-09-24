@@ -18,7 +18,13 @@ use rustc::hir::def_id::DefId;
 use rustc_plugin::Registry;
 use std::rc::Rc;
 
+// Used to express the Mir into the Lir used for the Jit compilation.
 extern crate holyjit_lib;
+
+// Used to serialize the lir provided in holyjit_lib.
+extern crate serde;
+extern crate bincode;
+
 mod trans;
 
 // This plugin works in 3 steps:

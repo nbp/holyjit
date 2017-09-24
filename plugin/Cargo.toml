@@ -5,6 +5,8 @@ authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
 
 [dependencies]
 holyjit_lib = { path = "../lib" }
+serde = "1.0"
+bincode = "0.8"
 
 [lib]
 name = "holyjit_plugin"

@@ -6,6 +6,9 @@ authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
 [dependencies]
 dynasm = "0.1"
 dynasmrt = "0.1"
+serde = "1.0"
+serde_derive = "1.0"
+bincode = "0.8"
 
 [lib]
 name = "holyjit_lib"

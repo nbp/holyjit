@@ -12,8 +12,18 @@
 
 pub use std::marker::PhantomData;
 
+// dynasm is "currently" used by the compiler as a way to generate code
+// without the burden of implementing yet another macro-assembler.
 #[macro_use]
 extern crate dynasmrt;
+
+// Serde is used for serializing and deserializing the LIR which is stored
+// by the plugin in a constant, and deserialized by the JIT compiler in
+// order to be manipulated.
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate bincode;
 
 pub mod lir;
 mod context;
