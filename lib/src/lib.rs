@@ -143,10 +143,13 @@ impl<Args, Output, T : HolyJitFn<Args, Output>> HolyJitFnWrapper<Args, Output, T
     /// Given a list of argument, extract a JitContext from it, and look for
     /// existing compiled code.  Otherwise, either return the static
     /// function, or the newly JIT compiled function.
-    fn select_fn(&self, args: &Args) -> &Fn<Args, Output = Output> {
+    fn select_fn<'ctx>(&'ctx self, args: &Args) -> &'ctx Fn<Args, Output = Output> {
         let jc = self.fun.get_jc(args);
-        let _ = jc.lookup(self.bytes, self.defs);
-        self.fun.get_fn()
+        let jitcode = jc.lookup::<'ctx, Args, Output>(self.bytes, self.defs);
+        match jitcode {
+            Some(code) => code,
+            None => self.fun.get_fn()
+        }
     }
 }
 

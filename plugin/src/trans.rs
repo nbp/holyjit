@@ -97,7 +97,7 @@ macro_rules! report_nyi {
             e => Err(e)
         }
     }
-}    
+}
 
 impl<'tcx> From<ty::layout::LayoutError<'tcx>> for Error {
     fn from(err: ty::layout::LayoutError<'tcx>) -> Error {
@@ -398,13 +398,13 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         Ok(())
     }
 
-    fn register_static(&mut self, rvalue: &mir::Rvalue<'tcx>, ty: ty::Ty<'tcx>) -> Result<lir::Imm, Error> {
+    fn register_static(&mut self, rvalue: &mir::Rvalue<'tcx>, ty: ty::Ty<'tcx>) -> Result<(lir::Imm, lir::Sz), Error> {
         println!("register_static: {:?} : {:?}", rvalue, ty);
         self.statics.push(rvalue.clone());
         let bump = self.statics_size;
         let (off, bump) = self.add_type(ty, bump)?;
         self.statics_size = bump;
-        Ok(off as lir::Imm)
+        Ok((off as lir::Imm, bump - off as lir::Sz))
     }
 
     fn lvalue<'b>(&'b mut self, lvalue: &'b mir::Lvalue<'tcx>, lvctx: LvalueCtx) -> Result<InstSeq<'tcx>, Error>
@@ -654,11 +654,11 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     &mir::Lvalue::Static(ref def) => {
                         let ty = self.tcx.mk_imm_ref(region.clone(), def.ty);
                         let reg = self.get_new_reg();
-                        let off = self.register_static(rvalue, ty)?;
+                        let (off, sz) = self.register_static(rvalue, ty)?;
 
                         Ok(InstSeq(vec![
                             lir::Inst::Live(reg),
-                            lir::Inst::Static(reg, off)
+                            lir::Inst::Static(reg, off, sz)
                         ], reg, ty))
                     },
 
@@ -894,10 +894,10 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         // Load the static in a register.
                         let reg = self.get_new_reg();
                         let ty = constant.ty;
-                        let off = self.register_static(&rv, ty)?;
+                        let (off, sz) = self.register_static(&rv, ty)?;
                         Ok(InstSeq(vec![
                             lir::Inst::Live(reg),
-                            lir::Inst::Static(reg, off),
+                            lir::Inst::Static(reg, off, sz),
                         ], reg, ty))
                     },
                     mir::Literal::Value { value } => {
@@ -1098,13 +1098,13 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 // Add the drop_in_place function address as a reference.
                 let rv = mir::Rvalue::Use(
                     mir::Operand::function_handle(self.tcx, def_id, substs, Default::default()));
-                let off = self.register_static(&rv, ty)?;
+                let (off, sz) = self.register_static(&rv, ty)?;
 
                 let fun_reg = self.get_new_reg();
                 let mut insts = lv_insts;
                 insts.append(&mut vec![
                     lir::Inst::Live(fun_reg),
-                    lir::Inst::Static(fun_reg, off),
+                    lir::Inst::Static(fun_reg, off, sz),
                 ]);
 
                 Ok(TermSeq(insts, lir::Terminator::Call {

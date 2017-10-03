@@ -111,13 +111,13 @@ and is not able to generate any code yet.
   - [x] Add a `jit!` macro, to make calls transparents, from the usage point
         of view.
   - [x] Create a JitContext class, and use it to request JIT compiled code.
-  - [ ] Create a graph representation.
+  - [x] Create a graph representation.
   - [ ] Consume the graph to generate code.
 
-- [ ] Create a Mir plugin
+- [x] Create a Mir plugin
   - [x] Detect location which have to be patched.
   - [x] Find functions which have to be converted.
   - [x] Inject a generated vector in the binary content.
   - [x] Inject static variable as a tuple.
-  - [ ] collect static variable references.
-  - [ ] Convert the Mir (from the Rust compiler) to the library graph representation.
+  - [x] collect static variable references.
+  - [x] Convert the Mir (from the Rust compiler) to the library graph representation.

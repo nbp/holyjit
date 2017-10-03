@@ -101,7 +101,7 @@ pub enum Inst {
     SetFramePtr(Reg, Sz, Sz),
 
     // Copy the address of a static value in a register.
-    Static(Reg, Imm),
+    Static(Reg, Imm, Sz),
 
     // Copy a constant into a register.
     CopyImm(Reg, Imm, Sz),
@@ -162,8 +162,7 @@ impl fmt::Display for CompilationUnit {
         write!(f, "  stack_size: {:?},\n", self.stack_size)?;
         write!(f, "  args_defs: {:?},\n", self.args_defs)?;
         write!(f, "  blocks: [\n")?;
-        let mut x = 0;
-        for b in &self.blocks {
+        for (x, b) in self.blocks.iter().enumerate() {
             write!(f, "    [{}] = {},\n", x, b)?;
         }
         write!(f, "  ],\n")?;
