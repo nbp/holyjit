@@ -5,7 +5,7 @@ results.
 HolyJIT is made to remove this trade-off! Simplicity and Security should no
 longer be exhanged for Performance reasons.
 
-== HolyJit
+# HolyJit
 
 HolyJit is a high-level Just-In-Time compiler. It extends the Rust compiler
 to convert the code of an interpreter written in Rust to tune a JIT compiler
@@ -16,7 +16,7 @@ HolyJit aims at being:
  * Safe.
  * Fast.
 
-=== Easy
+### Easy
 
 HolyJIT extends the Rust compiler to copy its internal representation of
 functions and convert it into a representation which can be consumed by the
@@ -40,7 +40,7 @@ to teach the JIT compiler what can be optimized by the compiler.
 No assembly knowledge is required to start instrumenting your code to make
 it available to the JIT compiler set of known functions.
 
-=== Safe
+### Safe
 
 Security issues from JIT compilers are coming from:
 * Duplication of the runtime into a set of MacroAssembler functions.
@@ -58,7 +58,7 @@ other projects, correctness of the compiler optimizations should be caught
 by the community of users and fuzzers. Thus leaving less bugs for you to
 find out.
 
-=== Fast
+### Fast
 
 Fast is a tricky question when dealing with a JIT compiler, as the cost of
 the compilation is part of the equation.
@@ -71,7 +71,7 @@ For final compilation tiers, it uses special types/traits to wrap the data
 in order to instrument and monitor the values which are being used, such
 that guard can later be converted into constraints.
 
-== Using HolyJit
+## Using HolyJit
 
 At the moment HolyJit relies on a patched version of rustc, which allow to
 create compiler plugins.  To use holyjit, you will have to compile this
@@ -98,7 +98,7 @@ currently at a prototype stage, and most of the code & dependencies present
 today were made only as a proof of concept and not as a definitive
 implementation design.
 
-== HolyJit Roadmap for 0.0.0
+## HolyJit Roadmap for 0.0.0
 
 The current goal is to make a proof of concept which highlight the main
 feature, i-e being trivial to integrate into an existing code base and to
