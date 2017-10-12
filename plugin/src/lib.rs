@@ -318,13 +318,12 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             statics.iter()
             // TODO: We need to create a reference to the statics types.
             .map(|rv| match rv {
-                &mir::Rvalue::Ref(ref region, _, mir::Lvalue::Static(ref st)) => {
+                &mir::Rvalue::Ref(ref region, _, mir::Lvalue::Static(ref st)) =>
                     // region == tcx.types.re_erased
-                    self.tcx.mk_imm_ref(region.clone(), st.ty)
-                }
-                &mir::Rvalue::Use(mir::Operand::Constant(ref constant)) => {
-                    constant.ty
-                }
+                    self.tcx.mk_imm_ref(region.clone(), st.ty),
+                &mir::Rvalue::Use(mir::Operand::Constant(ref constant)) =>
+                    constant.ty,
+                &mir::Rvalue::Cast(_, _, ty) => ty,
                 _ => unreachable!("Unexpected Rvalue: {:?}", rv)
             })
             .collect();

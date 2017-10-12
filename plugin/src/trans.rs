@@ -50,7 +50,7 @@ pub struct Transpiler<'a, 'tcx: 'a> {
 }
 
 struct Local<'tcx> {
-    idx: mir::Local,
+    _idx: mir::Local,
     ty: ty::Ty<'tcx>,
     off: usize,
     size: usize,
@@ -161,9 +161,11 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         ))
     }
 
+    /*
     fn mir(&mut self) -> Result<(), Error> {
         Ok(())
     }
+     */
 
     fn locals(&mut self, mir: &mir::Mir<'tcx>) -> Result<(Vec<lir::RegDef>, usize), Error> {
         // Loop over arguments and locals to find out about their sizes
@@ -176,7 +178,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         // see librustc_mir/transform/inline.rs  (type_size_of)
         //
         let mut stack : usize = 0;
-        let mut args_size : usize = 0;
+        let args_size : usize = 0; // TODO: Cumulate the stack size.
         let mut args_defs : Vec<lir::RegDef> = Vec::with_capacity(mir.arg_count);
         for (local, decl) in mir.local_decls.iter_enumerated() {
             let layout = decl.ty.layout(self.tcx, self.param_env)?;
@@ -199,13 +201,22 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         // Bump the stack pointer with the size of the local.
                         let (off, args_size) = self.add_type(decl.ty, args_size)?;
                         let reg = self.get_new_reg();
-                        args_defs.push((reg, args_size - off));
+                        let size = args_size - off;
+
+                        // TODO: use proper pointer size.
+                        if size > 8 {
+                            // Arguments are pass by pointer, if larger than
+                            // a pointer size. (unless it is a fat_pointer,
+                            // or is this only for returned values?)
+                            args_defs.push((reg, 8));
+                        } else {
+                            args_defs.push((reg, size));
+                        }
 
                         Local {
-                            idx: local,
+                            _idx: local,
                             ty: decl.ty,
-                            off: off,
-                            size: args_size - off,
+                            off, size,
                             reg: Some(reg),
                         }
                     },
@@ -217,7 +228,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         stack = bump;
 
                         Local {
-                            idx: local,
+                            _idx: local,
                             ty: decl.ty,
                             off: off,
                             size: bump - off,
@@ -252,7 +263,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         };
 
         let lir = self.new_block();
-        let id = self.blocks_map.insert(mir, lir);
+        let _id = self.blocks_map.insert(mir, lir);
         lir
     }
 
@@ -304,7 +315,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         match statement.kind {
             mir::StatementKind::Assign(ref lvalue, ref rvalue) => {
                 // Collect the sequence of instruction to fetch the value.
-                let InstSeq(mut rv_insts, rv_reg, rv_ty) =
+                let InstSeq(rv_insts, rv_reg, rv_ty) =
                     self.rvalue(rvalue).or_else(
                         report_nyi!("StatementKind::Assign(_, {:?})", rvalue))?;
 
@@ -330,7 +341,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                 Ok(insts)
             }
-            mir::StatementKind::SetDiscriminant{ ref lvalue, variant_index } => {
+            mir::StatementKind::SetDiscriminant{ .. } => {
                 Err(Error::NYI)
             }
             mir::StatementKind::InlineAsm { .. } => {
@@ -358,8 +369,8 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     fn type_of_local(&self, index: mir::Local) -> ty::Ty<'tcx> {
         self.locals_map[&index].ty
     }
-    fn offset_of_local(&self, index: mir::Local) -> usize {
-        self.locals_map[&index].off
+    fn offset_of_local(&self, index: mir::Local) -> isize {
+        0 - (self.locals_map[&index].off as isize) - (self.locals_map[&index].size as isize)
     }
     fn size_of_local(&self, index: mir::Local) -> usize {
         self.locals_map[&index].size
@@ -367,7 +378,9 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
     fn offset_of(&self, ty: ty::Ty<'tcx>, field: &mir::Field) -> Result<usize, Error> {
         let layout = ty.layout(self.tcx, self.param_env)?;
-        Ok(layout.field_offset(&self.tcx.data_layout, field.index(), None).bytes() as usize)
+        let off = layout.field_offset(&self.tcx.data_layout, field.index(), None).bytes();
+        println!("offset_of({:?}, {:?}) -> offset: {:?}  {{ layout: {:?} }}", ty, field, off, layout);
+        Ok(off as usize)
     }
 
     /// Given a type and the last bump size pointer, this function look at
@@ -399,11 +412,12 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     }
 
     fn register_static(&mut self, rvalue: &mir::Rvalue<'tcx>, ty: ty::Ty<'tcx>) -> Result<(lir::Imm, lir::Sz), Error> {
-        println!("register_static: {:?} : {:?}", rvalue, ty);
         self.statics.push(rvalue.clone());
         let bump = self.statics_size;
         let (off, bump) = self.add_type(ty, bump)?;
         self.statics_size = bump;
+        let layout = ty.layout(self.tcx, self.param_env)?;
+        println!("register_static:\n: {:?}\n: {:?}\n: {:?}\n: {:?}", rvalue, ty, bump - off, layout);
         Ok((off as lir::Imm, bump - off as lir::Sz))
     }
 
@@ -411,7 +425,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     {
         match (lvalue, lvctx) {
             (&mir::Lvalue::Local(index), LvalueCtx::Address) => {
-                if let Some(reg) = self.reg_of_local(index) {
+                if let Some(_reg) = self.reg_of_local(index) {
                     return Err(Error::NYI);
                 }
                 let off = self.get_new_reg();
@@ -434,6 +448,15 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             (&mir::Lvalue::Local(index), LvalueCtx::Value) => {
                 if let Some(reg) = self.reg_of_local(index) {
                     let ty = self.type_of_local(index);
+                    let ptr_size = 8; // TODO: use proper pointer size.
+                    if self.size_of_local(index) > ptr_size {
+                        let val = self.get_new_reg();
+                        return Ok(InstSeq(vec![
+                            lir::Inst::Live(val),
+                            lir::Inst::Load(val, reg, self.size_of_local(index) as lir::Sz),
+                            lir::Inst::Dead(reg),
+                        ], val, ty))
+                    }
                     return Ok(InstSeq(vec![], reg, ty));
                 }
                 let off = self.get_new_reg();
@@ -451,7 +474,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     lir::Inst::Live(reg),
                     // Add the offset to the stack frame pointer.
                     lir::Inst::Load(reg, ptr, self.size_of_local(index) as lir::Sz),
-                    lir::Inst::Dead(off),
+                    lir::Inst::Dead(ptr),
                 ], reg, self.type_of_local(index)))
             },
             (&mir::Lvalue::Static(ref def), _) => {
@@ -512,6 +535,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             }
             mir::ProjectionElem::Field(ref field, ref ty) => {
                 // Given a type, generate a field access for this type.
+                let struct_ty = base_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
                 match lvctx {
                     LvalueCtx::Value => {
                         let mut insts = base_insts;
@@ -525,7 +549,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                         insts.append(&mut vec![
                             lir::Inst::Live(imm),
-                            lir::Inst::CopyImm(imm, self.offset_of(base_ty, field)? as lir::Imm, size as lir::Sz),
+                            lir::Inst::CopyImm(imm, self.offset_of(struct_ty, field)? as lir::Imm, size as lir::Sz),
                             lir::Inst::Live(addr),
                             lir::Inst::Add(addr, base_reg, imm),
                             lir::Inst::Dead(imm),
@@ -548,7 +572,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                         insts.append(&mut vec![
                             lir::Inst::Live(imm),
-                            lir::Inst::CopyImm(imm, self.offset_of(base_ty, field)? as lir::Imm, size as lir::Sz),
+                            lir::Inst::CopyImm(imm, self.offset_of(struct_ty, field)? as lir::Imm, size as lir::Sz),
                             lir::Inst::Live(reg),
                             lir::Inst::Add(reg, base_reg, imm),
                             lir::Inst::Dead(imm),
@@ -561,7 +585,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             }
             mir::ProjectionElem::Index(ref operand) => {
                 // base [ operand ]
-                let InstSeq(idx_insts, idx_reg, idx_ty) =
+                let InstSeq(idx_insts, idx_reg, _idx_ty) =
                     self.operand(operand).or_else(
                         report_nyi!("mir::ProjectionElem::Index({:?})", operand))?;
 
@@ -592,7 +616,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 let res_ty = base_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
 
                 let elem_sz = match layout {
-                    &ty::layout::Layout::Array { align, element_size, .. } =>
+                    &ty::layout::Layout::Array { element_size, .. } =>
                         element_size.bytes() as lir::Sz,
                     _ => {
                         return Err(Error::UnexpectedIndexBase);
@@ -608,6 +632,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         let imm = self.get_new_reg();
                         let mul = self.get_new_reg();
                         let reg = self.get_new_reg();
+                        let val = self.get_new_reg();
                         let mut insts = idx_insts;
                         insts.append(&mut vec![
                             lir::Inst::Live(imm),
@@ -622,9 +647,11 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                             lir::Inst::Add(reg, base_reg, mul),
                             lir::Inst::Dead(base_reg),
                             lir::Inst::Dead(mul),
+                            lir::Inst::Load(val, reg, elem_sz),
+                            lir::Inst::Dead(reg),
                         ]);
 
-                        Ok(InstSeq(insts, reg, res_ty))
+                        Ok(InstSeq(insts, val, res_ty))
                     }
                     LvalueCtx::RefSlice => Err(Error::UnexpectedRefSliceCtx),
                     LvalueCtx::Address => Err(Error::NYI),
@@ -675,7 +702,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             }
 
             mir::Rvalue::Len(ref lvalue) => {
-                let InstSeq(mut lv_insts, lv_reg, lv_ty) =
+                let InstSeq(lv_insts, lv_reg, lv_ty) =
                     self.lvalue(lvalue, LvalueCtx::RefSlice).or_else(
                         report_nyi!("mir::Rvalue::Len({:?})", lvalue))?;
 
@@ -795,7 +822,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 Ok(InstSeq(insts, reg, ty))
             }
             mir::Rvalue::Aggregate(ref kind, ref operands) => {
-                let mut operands : Vec<_> = {
+                let operands : Vec<_> = {
                     let mut res = Vec::with_capacity(operands.len());
                     for op in operands {
                         res.push(
@@ -834,11 +861,10 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     ty::layout::Layout::Univariant { .. } => (),
                     ty::layout::Layout::General { discr, .. } => {
                         // Initialize the discriminant
-                        let (dty, sz) = match discr {
+                        let (_dty, sz) = match discr {
                             ty::layout::Integer::I8 => (self.tcx.types.i8, 1),
                             _ => {
                                 unreachable!("ty: {:?} / layout: {:?}", ty, layout);
-                                return Err(Error::NYI)
                             }
                         };
 
@@ -883,17 +909,38 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             }
             mir::Operand::Constant(ref constant) => {
                 let res = match constant.literal.clone() {
-                    mir::Literal::Item { def_id, substs } => {
+                    mir::Literal::Item { .. /*def_id, substs*/ } => {
                         Err(Error::NYI)
                     },
                     mir::Literal::Value { ref value } if self.constval_use_static(value) => {
-                        // Create a fake Rvalue which can be added in the
-                        // list of statics.
-                        let rv = mir::Rvalue::Use(operand.clone());
 
                         // Load the static in a register.
                         let reg = self.get_new_reg();
-                        let ty = constant.ty;
+                        let ty = {
+                            if constant.ty.is_fn() {
+                                // TyFnDecl has a 0-size, we want to save the
+                                // address of the function, which has a
+                                // pointer-size.
+                                self.tcx.mk_fn_ptr(constant.ty.fn_sig(self.tcx))
+                            } else {
+                                constant.ty
+                            }
+                        };
+
+                        // Create a fake Rvalue which can be added in the
+                        // list of statics.
+                        let rv = {
+                            if let ty::TyFnDef(_, _) = constant.ty.sty {
+                                mir::Rvalue::Cast(
+                                    mir::CastKind::ReifyFnPointer,
+                                    operand.clone(),
+                                    ty
+                                )
+                            } else {
+                                mir::Rvalue::Use(operand.clone())
+                            }
+                        };
+
                         let (off, sz) = self.register_static(&rv, ty)?;
                         Ok(InstSeq(vec![
                             lir::Inst::Live(reg),
@@ -941,9 +988,6 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             ConstVal::Integral(ConstInt::Usize(ConstUsize::Us64(i))) => vec![
                 lir::Inst::CopyImm(reg, i as lir::Imm, size)
             ],
-            ConstVal::Integral(ConstInt::Usize(ConstUsize::Us64(i))) => vec![
-                lir::Inst::CopyImm(reg, i as lir::Imm, size)
-            ],
             ConstVal::Function(_, _) |
             ConstVal::Str(_) =>
                 unreachable!("constval use static: cv: {:?} / ty: {:?}", cv, ty),
@@ -958,7 +1002,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     }
 
     fn terminator(&mut self, terminator: &mir::Terminator<'tcx>) -> Result<TermSeq, Error> {
-        let &mir::Terminator{ ref source_info, ref kind } = terminator;
+        let &mir::Terminator{ /* ref source_info,*/ ref kind, .. } = terminator;
         match kind {
             &mir::TerminatorKind::Resume => {
                 Ok(TermSeq(vec![], lir::Terminator::Unwind))
@@ -991,7 +1035,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 ref values,
                 ref targets,
             } => {
-                let InstSeq(idx_insts, idx_reg, idx_ty) =
+                let InstSeq(idx_insts, idx_reg, _idx_ty) =
                     self.operand(discr).or_else(
                         report_nyi!("mir::TerminatorKind::SwitchInt(discr: {:?})", discr))?;
                 let range : lir::RangeInclusive = {
@@ -1022,22 +1066,30 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 ref destination,
                 ref cleanup,
             } => {
-                let InstSeq(mut insts, fun_reg, fun_ty) =
+                let InstSeq(mut insts, fun_reg, _fun_ty) =
                     self.operand(func).or_else(
                         report_nyi!("mir::TerminatorKind::Call(func: {:?})", func))?;
+
+                // TODO: Follow what is done in librustc_trans/abi.rs to
+                // choose wether arguments are being transfered by value or
+                // by reference.
 
                 // TODO: collect the ABI with:
                 //    let sig = ty.fn_sig(self.tcx)
                 //    let sig = bcx.tcx().erase_late_bound_regions_and_normalize(&sig);
                 //    let abi = sig.abi;
 
-                let mut args_reg = Vec::with_capacity(args.len());
+                let mut args_reg = Vec::with_capacity(args.len() + 1);
                 for arg in args {
-                    let InstSeq(mut arg_insts, arg_reg, _) =
+                    let InstSeq(mut arg_insts, arg_reg, arg_ty) =
                         self.operand(arg).or_else(
                             report_nyi!("mir::TerminatorKind::Call(args: [.. {:?} ..])", arg))?;
-                    insts.append(&mut arg_insts);
-                    args_reg.push(arg_reg);
+                    let (_, size) = self.add_type(arg_ty, 0)?;
+                    // 0-size arguments are ignored.
+                    if size != 0 {
+                        insts.append(&mut arg_insts);
+                        args_reg.push(arg_reg);
+                    }
                 }
 
                 let unwind_target = match cleanup {
@@ -1049,30 +1101,65 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     &Some((ref lvalue, ref bb)) => {
                         let resume = self.new_block();
                         let target = self.get_block(*bb);
-                        let InstSeq(mut lv_insts, lv_reg, lv_ty) =
+                        let InstSeq(mut ret_insts, ret_reg, ret_ty) =
                             self.lvalue(lvalue, LvalueCtx::Address).or_else(
                                 report_nyi!("Call(destination: {:?}, _)", lvalue))?;
+                        let ret_ty = ret_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
 
-                        let (_, size) = self.add_type(lv_ty, 0)?;
-                        let lv_reg_def = (lv_reg, size);
+                        // TODO: check that the returned value is the same
+                        // size as the lvalue storage space.
+                        let (_, size) = self.add_type(ret_ty, 0)?;
 
-                        // Create a basic block in which the calls returns,
-                        // and in which we set the lvalue with the returned
-                        // value of the call.
-                        let fp_reg = self.fp;
-                        self.blocks[resume] = lir::BasicBlockData {
-                            input_regs: vec![
-                                (fp_reg, 8 /* size of frame ptr */ ),
-                                lv_reg_def
-                            ],
-                            output_regs: vec![ fp_reg ],
-                            insts: lv_insts,
-                            end: lir::Terminator::Goto {
-                                target: target,
-                            },
+                        let layout = ret_ty.layout(self.tcx, self.param_env)?;
+                        let is_fat_ptr = match layout {
+                            &ty::layout::Layout::FatPointer{ .. } => true,
+                            _ => false,
                         };
 
-                        Some(( Some(lv_reg_def), resume ))
+                        if size <= 8 || is_fat_ptr {
+                            // The returned values is returned by value,
+                            // and fat-pointer are returned on 2
+                            // registers.
+                            let val_reg = self.get_new_reg();
+                            let ret_reg_def = (val_reg, size);
+                            ret_insts.append(&mut vec![
+                                lir::Inst::Store(ret_reg, val_reg, size),
+                                lir::Inst::Dead(val_reg),
+                                lir::Inst::Dead(ret_reg),
+                            ]);
+
+                            // Create a basic block in which the calls returns,
+                            // and in which we set the lvalue with the returned
+                            // value of the call.
+                            let fp_reg = self.fp;
+                            self.blocks[resume] = lir::BasicBlockData {
+                                input_regs: vec![
+                                    (fp_reg, 8 /* size of frame ptr */ ),
+                                    ret_reg_def
+                                ],
+                                output_regs: vec![ fp_reg ],
+                                insts: ret_insts,
+                                end: lir::Terminator::Goto {
+                                    target: target,
+                                },
+                            };
+
+                            Some(( Some(ret_reg_def), resume ))
+                        } else {
+                            // The address where the content should be
+                            // initialized is given as the first
+                            // argument of the function, and should be
+                            // initialized by the callee.
+                            //
+                            // Note that the call will also return the
+                            // same value, but we do not yet care about
+                            // making it more efficient to read, thus we
+                            // simply ignore the returned value for now.
+                            insts.append(&mut ret_insts);
+                            args_reg.insert(0, ret_reg);
+
+                            Some(( None, target ))
+                        }
                     }
                     &None => None,
                 };
@@ -1085,7 +1172,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 }))
             }
             &mir::TerminatorKind::Drop { ref location, target, unwind } => {
-                let InstSeq(mut lv_insts, lv_reg, lv_ty) =
+                let InstSeq(lv_insts, lv_reg, lv_ty) =
                     self.lvalue(location, LvalueCtx::Address).or_else(
                         report_nyi!("Drop(location: {:?}, _)", location))?;
 
@@ -1094,10 +1181,15 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 let substs = self.tcx.intern_substs(&[ty::subst::Kind::from(lv_ty)]);
                 // see def_ty
                 let ty = self.tcx.type_of(def_id).subst(self.tcx, substs);
+                assert!(ty.is_fn());
+                let ty = self.tcx.mk_fn_ptr(ty.fn_sig(self.tcx));
 
                 // Add the drop_in_place function address as a reference.
-                let rv = mir::Rvalue::Use(
-                    mir::Operand::function_handle(self.tcx, def_id, substs, Default::default()));
+                let rv = mir::Rvalue::Cast(
+                    mir::CastKind::ReifyFnPointer,
+                    mir::Operand::function_handle(self.tcx, def_id, substs, Default::default()),
+                    ty
+                );
                 let (off, sz) = self.register_static(&rv, ty)?;
 
                 let fun_reg = self.get_new_reg();
@@ -1117,7 +1209,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             &mir::TerminatorKind::Assert {
                 ref cond, expected, target, ..
             } => {
-                let InstSeq(mut cond_insts, cond_reg, cond_ty) =
+                let InstSeq(cond_insts, cond_reg, _cond_ty) =
                     self.operand(cond).or_else(
                         report_nyi!("Assert(cond: {:?}, _)", cond))?;
 

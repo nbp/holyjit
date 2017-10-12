@@ -1,9 +1,7 @@
 #![feature(plugin, custom_attribute)]
 #![plugin(holyjit_plugin)]
 #![feature(unboxed_closures)]
-
 #[macro_use] extern crate holyjit_lib as hj;
-
 
 jit!{ fn eval(jc: hj::JitContext, program: String) -> Result<(), ()> = eval_impl in jc; }
 fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
@@ -19,8 +17,8 @@ fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
         match prog[pc] {
             b'>' => { val += 1; }
             b'<' => { val -= 1; }
-            b'-' => { mem[val as usize] += 1; }
-            b'+' => { mem[val as usize] -= 1; }
+            b'-' => { mem[val as usize] -= 1; }
+            b'+' => { mem[val as usize] += 1; }
             b'.' => { panic!("putchar: NYI"); }
             b',' => { panic!("getchar: NYI"); }
             b'[' => {
@@ -61,5 +59,6 @@ fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
 
 fn main() {
     let jc : hj::JitContext = Default::default();
-    eval(jc, "".into()).unwrap()
+    let res = eval(jc, "++".into());
+    res.unwrap();
 }

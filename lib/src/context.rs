@@ -3,24 +3,35 @@
 /// as well as the heuristics for enterring the JIT.
 
 use compile::JitCode;
+use std::rc::Rc;
 
 /// Opaque structure which is used to store the function mapping, and tune
 /// the JIT parameters.
 pub struct JitContext {
-    code: Option<JitCode>
+    code: Option<Rc<JitCode>>
 }
 
 impl JitContext {
-    pub fn lookup<'ctx, Args, Output>(&self, bytes: &[u8], defs: *const ()) -> Option<&'ctx Fn<Args, Output = Output>> {
+    pub fn lookup(&self, bytes: &[u8], defs: *const ()) -> Option<Rc<JitCode>> {
         match &self.code {
-            &Some(ref jit) => Some(jit.get_fn::<'ctx, Args, Output>()),
-            &None => match JitCode::compile(bytes, defs) {
-                Ok(jit) => {
-                    // TODO:
-                    // self.code = Some(jit);
-                    Some(jit.get_fn::<'ctx, Args, Output>())
+            &Some(ref jit) => {
+                println!("Found JIT Code in the context");
+                Some(jit.clone())
+            }
+            &None => {
+                println!("Did not found JIT Code in the context.\nStart compiling ...");
+                match JitCode::compile(bytes, defs) {
+                    Ok(jit) => {
+                        let jit = Rc::new(jit);
+                        // TODO: Store the Jit code on the context.
+                        // self.code = Some(jit);
+                        Some(jit)
+                    }
+                    Err(e) => {
+                        println!("JIT Compiler Error: {:?}", e);
+                        None
+                    }
                 }
-                Err(_) => None
             }
         }
     }

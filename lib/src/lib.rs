@@ -11,6 +11,7 @@
 #![plugin(dynasm)]
 
 pub use std::marker::PhantomData;
+use std::rc::Rc;
 
 // dynasm is "currently" used by the compiler as a way to generate code
 // without the burden of implementing yet another macro-assembler.
@@ -30,6 +31,7 @@ mod context;
 mod compile;
 
 pub use context::JitContext;
+pub use compile::JitCode;
 
 /// This trait should be implemented by every function that we want to be able to Jit. This trait
 /// implements the Fn trait to make this function callable, and to make it a potential entry point
@@ -43,21 +45,50 @@ pub use context::JitContext;
 
 /// CurryN types are made to wrap the native function pointer and provide
 /// a FnOnce, FnMut, and Fn traits implementation.
-pub struct Curry0<Output> { pub fun: fn() -> Output }
+pub enum Curry0<Output> {
+    Native(fn() -> Output),
+    // Use an Rc in order to ensure that the JitCode is kept alive as long
+    // as the function is running on the stack.
+    Jit(Rc<JitCode>)
+}
 impl<Output> FnOnce<()> for Curry0<Output> {
     type Output = Output;
     extern "rust-call" fn call_once(self, _: ()) -> Output {
-        (self.fun)()
+        match self {
+            Curry0::Native(fun) => fun(),
+            Curry0::Jit(jit) => {
+                let fun : fn() -> Output = unsafe {
+                    std::mem::transmute(jit.get_fn())
+                };
+                fun()
+            }
+        }
     }
 }
 impl<Output> FnMut<()> for Curry0<Output> {
     extern "rust-call" fn call_mut(&mut self, _: ()) -> Output {
-        (self.fun)()
+        match self {
+            &mut Curry0::Native(ref mut fun) => fun(),
+            &mut Curry0::Jit(ref mut jit) => {
+                let fun : fn() -> Output = unsafe {
+                    std::mem::transmute(jit.get_fn())
+                };
+                fun()
+            }
+        }
     }
 }
 impl<Output> Fn<()> for Curry0<Output> {
     extern "rust-call" fn call(&self, _: ()) -> Output {
-        (self.fun)()
+        match self {
+            &Curry0::Native(ref fun) => fun(),
+            &Curry0::Jit(ref jit) => {
+                let fun : fn() -> Output = unsafe {
+                    std::mem::transmute(jit.get_fn())
+                };
+                fun()
+            }
+        }
     }
 }
 
@@ -77,21 +108,48 @@ macro_rules! fn_ty {
 
 macro_rules! curry_decl {
     ($name:ident<($($arg:ident),*) -> $ret:ident>) => {
-        pub struct $name<$($arg,)* $ret> { pub fun: fn($($arg),*) -> $ret }
+        pub enum $name<$($arg,)* $ret> {
+            Native(fn($($arg),*) -> $ret),
+            Jit(Rc<JitCode>)
+        }
         impl<$($arg,)* $ret> FnOnce<fn_ty!{$($arg),*}> for $name<$($arg,)* $ret> {
             type Output = $ret;
             extern "rust-call" fn call_once(self, args: fn_ty!{$($arg),*}) -> $ret {
-                curry_call!{ (self.fun) => args: ($($arg),*) }
+                match self {
+                    $name::Native(fun) => curry_call!{ fun => args: ($($arg),*) },
+                    $name::Jit(jit) => {
+                        let fun : fn($($arg),*) -> $ret = unsafe {
+                            std::mem::transmute(jit.get_fn())
+                        };
+                        curry_call!{ fun => args: ($($arg),*) }
+                    }
+                }
             }
         }
         impl<$($arg,)* $ret> FnMut<fn_ty!{$($arg),*}> for $name<$($arg,)* $ret> {
             extern "rust-call" fn call_mut(&mut self, args: fn_ty!{$($arg),*}) -> $ret {
-                curry_call!{ (self.fun) => args: ($($arg),*) }
+                match self {
+                    &mut $name::Native(ref mut fun) => curry_call!{ fun => args: ($($arg),*) },
+                    &mut $name::Jit(ref mut jit) => {
+                        let fun : fn($($arg),*) -> $ret = unsafe {
+                            std::mem::transmute(jit.get_fn())
+                        };
+                        curry_call!{ fun => args: ($($arg),*) }
+                    }
+                }
             }
         }
         impl<$($arg,)* $ret> Fn<fn_ty!{$($arg),*}> for $name<$($arg,)* $ret> {
             extern "rust-call" fn call(&self, args: fn_ty!{$($arg),*}) -> $ret {
-                curry_call!{ (self.fun) => args: ($($arg),*) }
+                match self {
+                    &$name::Native(ref fun) => curry_call!{ fun => args: ($($arg),*) },
+                    &$name::Jit(ref jit) => {
+                        let fun : fn($($arg),*) -> $ret = unsafe {
+                            std::mem::transmute(jit.get_fn())
+                        };
+                        curry_call!{ fun => args: ($($arg),*) }
+                    }
+                }
             }
         }
     }
@@ -107,8 +165,11 @@ curry_decl!{ Curry4<(A0,A1,A2,A3) -> Output>  }
 /// the number of hit-counts, this function will select either the function
 /// statically compiled by rustc, or the result of the compilation performed
 /// by HolyJit.
-pub trait HolyJitFn<Args, Output> {
-    fn get_fn(&self) -> &Fn<Args, Output = Output>;
+pub trait HolyJitFn<Args> {
+    type Curry;
+    type Output;
+    fn get_fn(&self) -> Self::Curry;
+    fn from_code(jit: Rc<JitCode>) -> Self::Curry where Self : Sized;
     fn get_jc<'a>(&self, args: &'a Args) -> &'a JitContext;
 }
 
@@ -117,7 +178,9 @@ pub trait HolyJitFn<Args, Output> {
 /// arguments type, and the second parameter defines Output of the function.
 /// The last parameter T corresponds to the structure which is wrapping the
 /// function pointer. This structure should implement the HolyJitFn trait.
-pub struct HolyJitFnWrapper<Args, Output, T: HolyJitFn<Args, Output>>{
+pub struct HolyJitFnWrapper<Args, Output, Curry, T>
+    where T : HolyJitFn<Args, Curry = Curry, Output = Output>
+{
     /// Reference to the statically compiled function.
     pub fun: T,
 
@@ -136,24 +199,29 @@ pub struct HolyJitFnWrapper<Args, Output, T: HolyJitFn<Args, Output>>{
     pub defs: *const (),
 
     // Keep track of the types.
-    pub _proto: PhantomData<HolyJitFn<Args, Output>>
+    pub _proto: PhantomData<HolyJitFn<Args, Curry = Curry, Output = Output>>
 }
 
-impl<Args, Output, T : HolyJitFn<Args, Output>> HolyJitFnWrapper<Args, Output, T> {
+impl<Args, Output, Curry, T> HolyJitFnWrapper<Args, Output, Curry, T>
+    where T : HolyJitFn<Args, Curry = Curry, Output = Output>
+{
     /// Given a list of argument, extract a JitContext from it, and look for
     /// existing compiled code.  Otherwise, either return the static
     /// function, or the newly JIT compiled function.
-    fn select_fn<'ctx>(&'ctx self, args: &Args) -> &'ctx Fn<Args, Output = Output> {
+    fn select_fn<'ctx>(&'ctx self, args: &Args) -> Curry {
         let jc = self.fun.get_jc(args);
-        let jitcode = jc.lookup::<'ctx, Args, Output>(self.bytes, self.defs);
-        match jitcode {
-            Some(code) => code,
+        match jc.lookup(self.bytes, self.defs) {
+            Some(code) => T::from_code(code),
             None => self.fun.get_fn()
         }
     }
 }
 
-impl<Args, Output, T : HolyJitFn<Args, Output>> FnOnce<Args> for HolyJitFnWrapper<Args, Output, T> {
+impl<Args, Output, Curry, T> FnOnce<Args>
+    for HolyJitFnWrapper<Args, Output, Curry, T>
+    where T : HolyJitFn<Args, Curry = Curry, Output = Output>,
+          Curry : FnOnce<Args, Output = Output>
+{
     type Output = Output;
     extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
         let f = {
@@ -163,7 +231,11 @@ impl<Args, Output, T : HolyJitFn<Args, Output>> FnOnce<Args> for HolyJitFnWrappe
         f.call_once(args)
     }
 }
-impl<Args, Output, T : HolyJitFn<Args, Output>> FnMut<Args> for HolyJitFnWrapper<Args, Output, T> {
+impl<Args, Output, Curry, T : HolyJitFn<Args, Curry = Curry>> FnMut<Args>
+    for HolyJitFnWrapper<Args, Output, Curry, T>
+    where T : HolyJitFn<Args, Curry = Curry, Output = Output>,
+          Curry : FnMut<Args, Output = Output>
+{
     extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
         let mut f = {
             let ra = &args;
@@ -172,7 +244,11 @@ impl<Args, Output, T : HolyJitFn<Args, Output>> FnMut<Args> for HolyJitFnWrapper
         f.call_mut(args)
     }
 }
-impl<Args, Output, T : HolyJitFn<Args, Output>> Fn<Args> for HolyJitFnWrapper<Args, Output, T> {
+impl<Args, Output, Curry, T : HolyJitFn<Args, Curry = Curry>> Fn<Args>
+    for HolyJitFnWrapper<Args, Output, Curry, T>
+    where T : HolyJitFn<Args, Curry = Curry, Output = Output>,
+          Curry : Fn<Args, Output = Output>
+{
     extern "rust-call" fn call(&self, args: Args) -> Self::Output {
         let f = {
             let ra = &args;
@@ -190,11 +266,17 @@ macro_rules! curry {
     (($a0:ty,$a1:ty,$a2:ty) -> $ret_type:ty) => { $crate::Curry3<$a0,$a1,$a2,$ret_type> };
     (($a0:ty,$a1:ty,$a2:ty,$a3:ty) -> $ret_type:ty) => { $crate::Curry4<$a0,$a1,$a2,$a3,$ret_type> };
 
-    (() -> $ret_type:ty = $e:ident ) => { $crate::Curry0{ fun: $e } };
-    (($a0:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry1{ fun: $e } };
-    (($a0:ty,$a1:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry2{ fun: $e } };
-    (($a0:ty,$a1:ty,$a2:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry3{ fun: $e } };
-    (($a0:ty,$a1:ty,$a2:ty,$a3:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry4{ fun: $e } };
+    (() -> $ret_type:ty = $e:ident ) => { $crate::Curry0::Native( $e ) };
+    (($a0:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry1::Native( $e ) };
+    (($a0:ty,$a1:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry2::Native( $e ) };
+    (($a0:ty,$a1:ty,$a2:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry3::Native( $e ) };
+    (($a0:ty,$a1:ty,$a2:ty,$a3:ty) -> $ret_type:ty = $e:ident ) => { $crate::Curry4::Native( $e ) };
+
+    (() -> $ret_type:ty = < $e:ident > ) => { $crate::Curry0::Jit( $e ) };
+    (($a0:ty) -> $ret_type:ty = < $e:ident > ) => { $crate::Curry1::Jit( $e ) };
+    (($a0:ty,$a1:ty) -> $ret_type:ty = < $e:ident > ) => { $crate::Curry2::Jit( $e ) };
+    (($a0:ty,$a1:ty,$a2:ty) -> $ret_type:ty = < $e:ident > ) => { $crate::Curry3::Jit( $e ) };
+    (($a0:ty,$a1:ty,$a2:ty,$a3:ty) -> $ret_type:ty = < $e:ident > ) => { $crate::Curry4::Jit( $e ) };
 }
 
 #[macro_export]
@@ -221,7 +303,7 @@ macro_rules! jit {
         // proper way to generate new identifier, we use this aliasing
         // technique to avoid conflicting hard-coded names.
         #[allow(non_upper_case_globals)]
-        const $fun : $crate::HolyJitFnWrapper<fn_ty!{$($typ),*}, $ret_type, $fun> = $crate::HolyJitFnWrapper{
+        const $fun : $crate::HolyJitFnWrapper<fn_ty!{$($typ),*}, $ret_type, curry!{ ($($typ),*) -> $ret_type }, $fun> = $crate::HolyJitFnWrapper{
             fun   : $fun{ curry: curry!{ ($($typ),*) -> $ret_type = $delegate } },
             bytes : &[ 0 /* placeholder for holyjit plugin */ ],
             defs  : &(1u8, 2u8) as *const _ as *const (),
@@ -229,10 +311,20 @@ macro_rules! jit {
         };
         #[allow(non_camel_case_types)]
         struct $fun { curry: curry!{ ($($typ),*) -> $ret_type } }
-        impl $crate::HolyJitFn<fn_ty!{$($typ),*}, $ret_type> for $fun {
-            fn get_fn(&self) -> &Fn<fn_ty!{$($typ),*}, Output = $ret_type> {
+        impl $crate::HolyJitFn<fn_ty!{$($typ),*}> for $fun {
+            type Curry = curry!{ ($($typ),*) -> $ret_type };
+            type Output = $ret_type;
+            fn get_fn(&self) -> Self::Curry {
                 // Return the statically compiled function.
-                &self.curry
+                if let curry!{ ($($typ),*) -> $ret_type = fun } = self.curry {
+                    curry!{ ($($typ),*) -> $ret_type = fun }
+                } else {
+                    panic!("The impossible happened!")
+                }
+            }
+            fn from_code(jit: std::rc::Rc<$crate::JitCode>) -> Self::Curry {
+                // Return the dynamically compiled function.
+                curry!{($($typ),*) -> $ret_type = < jit > }
             }
             fn get_jc<'a>(&self, args: &'a fn_ty!{$($typ),*}) -> &'a $crate::JitContext {
                 // Use a match statement to fake the arguments bindings of
