@@ -12,11 +12,11 @@ to convert the code of an interpreter written in Rust to tune a JIT compiler
 to handle the same interpreted language.
 
 HolyJit aims at being:
- * trivial.
- * secure.
- * fast.
+ * Easy.
+ * Safe.
+ * Fast.
 
-=== Trivial
+=== Easy
 
 HolyJIT extends the Rust compiler to copy its internal representation of
 functions and convert it into a representation which can be consumed by the
@@ -26,8 +26,10 @@ As a user, this implies that to inline a function in JIT compiled code, one
 just need to annotate it with the `jit!` macro:
 
 ```rust
-jit!{ fn eval(jc: &JitContext, script: &JSScript, args: &[Value]) -> Result<Value, Error> = eval_impl }
-fn eval_impl(_jc: &JitContext, script: &JSScript, args: &[Value]) -> Result<Value, Error> {
+jit!{ fn eval(script: &JSScript, args: &[Value]) -> Result<Value, Error> =
+eval_impl in script.as_ref() }
+
+fn eval_impl(script: &JSScript, args: &[Value]) -> Result<Value, Error> {
     ...
 }
 ```
@@ -38,7 +40,7 @@ to teach the JIT compiler what can be optimized by the compiler.
 No assembly knowledge is required to start instrumenting your code to make
 it available to the JIT compiler set of known functions.
 
-=== Secure
+=== Safe
 
 Security issues from JIT compilers are coming from:
 * Duplication of the runtime into a set of MacroAssembler functions.
@@ -51,27 +53,23 @@ the duplication of code.
 Moreover, the code which is given to the JIT compiler is as safe as the code
 users wrote in the Rust language.
 
-As HolyJit aims at being a JIT library which can easily be added into other
-projects, correctness of the compiler optimizations should be caught by the
-community of users. Thus leaving less bugs for you to find out.
+As HolyJit aims at being a JIT library which can easily be embedded into
+other projects, correctness of the compiler optimizations should be caught
+by the community of users and fuzzers. Thus leaving less bugs for you to
+find out.
 
 === Fast
 
 Fast is a tricky question when dealing with a JIT compiler, as the cost of
 the compilation is part of the equation.
 
-When a compilation assumption fails, such failure is as costly as the extra
-time spent in the lower tier of the compiler.  An assumption failure cost is
-proportional to the cost of the compilation.
+HolyJit aims at reducing the start-up time, based on annotation made out of
+macros, to guide the early tiers of the compilers for unrolling loops and
+generating inline caches.
 
-Thus, HolyJit compiler aims to reduce the time taken by the compiler, to
-make it as fast as possible.  Thus opening the room for more assumption to
-be used during the compilation.
-
-The advantage of assumption failure, is that they do not have to be prooven,
-they only have to verified.  As long as the verification cost does not
-overcome the benefit of the optimization, we should be able to optimize much
-futher than what static compilers can do.
+For final compilation tiers, it uses special types/traits to wrap the data
+in order to instrument and monitor the values which are being used, such
+that guard can later be converted into constraints.
 
 == Using HolyJit
 
@@ -95,16 +93,21 @@ or run the examples of HolyJit with:
 $ cargo run --example brainfuck --verbose
 ```
 
-== HolyJit Roadmap for 0.1.0
+At the moment, HolyJit is far from being yet ready for production! This is
+currently at a prototype stage, and most of the code & dependencies present
+today were made only as a proof of concept and not as a definitive
+implementation design.
+
+== HolyJit Roadmap for 0.0.0
 
 The current goal is to make a proof of concept which highlight the main
 feature, i-e being trivial to integrate into an existing code base and to
 have a running JIT compiler.
 
 As of today, HolyJit contains a draft of what the interface might look like,
-and is not able to generate any code yet.
+and is able to generate code for the example present in the repository.
 
-- [ ] Create Rust library
+- [x] Create Rust library
   - [x] Allocate pages and map them as executable.
   - [x] Add a way call either a dynamically compiled function or a statically
         compiled function.
@@ -112,7 +115,7 @@ and is not able to generate any code yet.
         of view.
   - [x] Create a JitContext class, and use it to request JIT compiled code.
   - [x] Create a graph representation.
-  - [ ] Consume the graph to generate code.
+  - [x] Consume the graph to generate code.
 
 - [x] Create a Mir plugin
   - [x] Detect location which have to be patched.
