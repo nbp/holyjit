@@ -96,8 +96,8 @@ Use the above rustc to compile the HolyJit library and plugin, as well as
 whatever project which depends on HolyJit.
 
 If you are using HolyJit library, but you are not using the plugin, then the
-JIT would not be enabled as no data stored in the binary to be consumed by
-the JIT compiler.
+JIT would not be enabled as would no data stored in the binary to be
+consumed by the JIT compiler at runtime.
 
 To run tests, you can either run the test of the library with `cargo test`,
 or run the examples of HolyJit with:
