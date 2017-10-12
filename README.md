@@ -26,11 +26,24 @@ As a user, this implies that to inline a function in JIT compiled code, one
 just need to annotate it with the `jit!` macro:
 
 ```rust
-jit!{ fn eval(script: &JSScript, args: &[Value]) -> Result<Value, Error> =
-eval_impl in script.as_ref() }
+jit!{
+    fn eval(script: &Script, args: &[Value]) -> Result<Value, Error>
+    = eval_impl
+    in script.as_ref()
+}
 
-fn eval_impl(script: &JSScript, args: &[Value]) -> Result<Value, Error> {
-    ...
+fn eval_impl(script: &Script, args: &[Value]) -> Result<Value, Error> {
+    // ...
+    // ... A few hundred lines or ordinary Rust code later ...
+    // ...
+}
+
+fn main() {
+    let script = ...;
+    let args = ...;
+    // Call it as any ordinary function.
+    let res = eval(&script, &args);
+    println!("Result: {}", res);
 }
 ```
 
