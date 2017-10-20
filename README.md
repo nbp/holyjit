@@ -2,7 +2,7 @@ Making a Just-In-Time compiler is complex, a large source of security
 issues, and is a price which is frequently paid to have better performance
 results.
 
-HolyJIT is made to remove this trade-off! Simplicity and Security should no
+HolyJit is made to remove this trade-off! Simplicity and Security should no
 longer be exchanged for Performance reasons.
 
 # HolyJit
@@ -18,9 +18,9 @@ HolyJit aims at being:
 
 ### Easy
 
-HolyJIT extends the Rust compiler to copy its internal representation of
+HolyJit extends the Rust compiler to copy its internal representation of
 functions and convert it into a representation which can be consumed by the
-Jit compiler provided by HolyJit library.
+JIT compiler provided by HolyJit library.
 
 As a user, this implies that to inline a function in JIT compiled code, one
 just need to annotate it with the `jit!` macro:
@@ -55,7 +55,7 @@ it available to the JIT compiler set of known functions.
 
 ### Safe
 
-Security issues from JIT compilers are coming from:
+Security issues from JIT compilers arise from:
 * Duplication of the runtime into a set of MacroAssembler functions.
 * Correctness of the compiler optimization.
 
