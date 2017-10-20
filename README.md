@@ -3,7 +3,7 @@ issues, and is a price which is frequently paid to have better performance
 results.
 
 HolyJit is made to remove this trade-off! Simplicity and Security should no
-longer be exhanged for Performance reasons.
+longer be exchanged for Performance reasons.
 
 # HolyJit
 
@@ -34,7 +34,7 @@ jit!{
 
 fn eval_impl(script: &Script, args: &[Value]) -> Result<Value, Error> {
     // ...
-    // ... A few hundred lines or ordinary Rust code later ...
+    // ... A few hundred lines of ordinary Rust code later ...
     // ...
 }
 
@@ -59,7 +59,7 @@ Security issues from JIT compilers arise from:
 * Duplication of the runtime into a set of MacroAssembler functions.
 * Correctness of the compiler optimization.
 
-As HolyJiy extends the Rust compiler to extract the effective knowledge of
+As HolyJit extends the Rust compiler to extract the effective knowledge of
 the compiler, there is no more risk of having correctness issues caused by
 the duplication of code.
 
