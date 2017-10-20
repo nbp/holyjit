@@ -59,7 +59,7 @@ Security issues from JIT compilers are coming from:
 * Duplication of the runtime into a set of MacroAssembler functions.
 * Correctness of the compiler optimization.
 
-As HolyJiy extends the Rust compiler to extract the effective knowledge of
+As HolyJit extends the Rust compiler to extract the effective knowledge of
 the compiler, there is no more risk of having correctness issues caused by
 the duplication of code.
 
