@@ -3,7 +3,7 @@ issues, and is a price which is frequently paid to have better performance
 results.
 
 HolyJIT is made to remove this trade-off! Simplicity and Security should no
-longer be exhanged for Performance reasons.
+longer be exchanged for Performance reasons.
 
 # HolyJit
 
