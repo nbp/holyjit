@@ -7,7 +7,7 @@ jit!{ fn eval(jc: hj::JitContext, program: String) -> Result<(), ()> = eval_impl
 fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
     let prog = program.as_bytes();
     let mut pc : usize = 0;
-    let mut val : u8 = 0;
+    let mut ptr : usize = 0;
     let mut mem : Vec<u8> = Vec::with_capacity(256);
     mem.resize(256, 0);
     loop {
@@ -15,14 +15,19 @@ fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
             return Ok(());
         }
         match prog[pc] {
-            b'>' => { val += 1; }
-            b'<' => { val -= 1; }
-            b'-' => { mem[val as usize] -= 1; }
-            b'+' => { mem[val as usize] += 1; }
+            b'>' => {
+                ptr += 1;
+                if ptr >= mem.len() {
+                    mem.push(0);
+                }
+            }
+            b'<' => { ptr = ptr.saturating_sub(1); }
+            b'-' => { mem[ptr] = mem[ptr].wrapping_sub(1); }
+            b'+' => { mem[ptr] = mem[ptr].wrapping_add(1); }
             b'.' => { panic!("putchar: NYI"); }
             b',' => { panic!("getchar: NYI"); }
             b'[' => {
-                if val == 0 {
+                if mem[ptr] == 0 {
                     let mut iter = (pc + 1, 0);
                     loop {
                         iter = match (iter, prog[iter.0]) {
@@ -35,6 +40,7 @@ fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
                             ((p, d), _) => (p + 1, d)
                         }
                     }
+                    continue; // skip pc increment
                 }
             }
             b']' => {
@@ -50,6 +56,7 @@ fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
                         ((p, d), _) => (p - 1, d)
                     }
                 }
+                continue; // skip pc increment
             }
             _ => { panic!("Unknown Symbol"); }
         }
