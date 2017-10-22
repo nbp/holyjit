@@ -2,8 +2,8 @@ Making a Just-In-Time compiler is complex, a large source of security
 issues, and is a price which is frequently paid to have better performance
 results.
 
-HolyJit is made to remove this trade-off! Simplicity and Security should no
-longer be exchanged for Performance reasons.
+HolyJit is made to remove this trade-off! Simplicity and security should no
+longer be sacrificed for performance reasons.
 
 # HolyJit
 
@@ -51,13 +51,13 @@ Thus, you basically have to write an interpreter, and annotate it properly
 to teach the JIT compiler what can be optimized by the compiler.
 
 No assembly knowledge is required to start instrumenting your code to make
-it available to the JIT compiler set of known functions.
+it available to the JIT compiler's set of known functions.
 
 ### Safe
 
 Security issues from JIT compilers arise from:
-* Duplication of the runtime into a set of MacroAssembler functions.
-* Correctness of the compiler optimization.
+  * Duplication of the runtime into a set of MacroAssembler functions.
+  * Correctness of the compiler optimizations.
 
 As HolyJit extends the Rust compiler to extract the effective knowledge of
 the compiler, there is no more risk of having correctness issues caused by
@@ -68,26 +68,26 @@ users wrote in the Rust language.
 
 As HolyJit aims at being a JIT library which can easily be embedded into
 other projects, correctness of the compiler optimizations should be caught
-by the community of users and fuzzers. Thus leaving less bugs for you to
-find out.
+by the community of users and fuzzers, thus leaving less bugs for you to
+find.
 
 ### Fast
 
 Fast is a tricky question when dealing with a JIT compiler, as the cost of
 the compilation is part of the equation.
 
-HolyJit aims at reducing the start-up time, based on annotation made out of
+HolyJit aims at reducing the start-up time, based on annotations made out of
 macros, to guide the early tiers of the compilers for unrolling loops and
 generating inline caches.
 
 For final compilation tiers, it uses special types/traits to wrap the data
 in order to instrument and monitor the values which are being used, such
-that guard can later be converted into constraints.
+that guards can later be converted into constraints.
 
 ## Using HolyJit
 
 At the moment HolyJit relies on a patched version of rustc, which allow to
-create compiler plugins.  To use holyjit, you will have to compile this
+create compiler plugins. To use HolyJit, you will have to compile this
 custom rustc from the following repository:
 
 https://github.com/nbp/rust/tree/register_opt_mir_pass
@@ -113,8 +113,8 @@ implementation design.
 
 ## HolyJit Roadmap for 0.0.0
 
-The current goal is to make a proof of concept which highlight the main
-feature, i-e being trivial to integrate into an existing code base and to
+The current goal is to make a proof of concept which highlights the main
+feature, i.e. being trivial to integrate into an existing code base and to
 have a running JIT compiler.
 
 As of today, HolyJit contains a draft of what the interface might look like,
@@ -122,18 +122,19 @@ and is able to generate code for the example present in the repository.
 
 - [x] Create Rust library
   - [x] Allocate pages and map them as executable.
-  - [x] Add a way call either a dynamically compiled function or a statically
-        compiled function.
-  - [x] Add a `jit!` macro, to make calls transparents, from the usage point
-        of view.
+  - [x] Add a way to call either a dynamically compiled function or a
+        statically compiled function.
+  - [x] Add a `jit!` macro, to make calls transparent from the usage point of
+        view.
   - [x] Create a JitContext class, and use it to request JIT compiled code.
   - [x] Create a graph representation.
   - [x] Consume the graph to generate code.
 
-- [x] Create a Mir plugin
-  - [x] Detect location which have to be patched.
+- [x] Create a MIR plugin
+  - [x] Detect locations which have to be patched.
   - [x] Find functions which have to be converted.
   - [x] Inject a generated vector in the binary content.
-  - [x] Inject static variable as a tuple.
-  - [x] collect static variable references.
-  - [x] Convert the Mir (from the Rust compiler) to the library graph representation.
+  - [x] Inject static variables as a tuple.
+  - [x] Collect static variable references.
+  - [x] Convert the MIR (from the Rust compiler) to the library graph
+        representation.
