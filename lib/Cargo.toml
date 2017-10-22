@@ -3,11 +3,13 @@ name = "holyjit_lib"
 version = "0.0.0"
 authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
 
+# Lock dynasm and serde_derive in order to build against old versions of
+# rustc.
 [dependencies]
-dynasm = "=0.1.2"
-dynasmrt = "=0.1.2"
+dynasm = "=0.1.1"
+dynasmrt = "=0.1.1"
 serde = "1.0"
-serde_derive = "1.0"
+serde_derive = "=1.0.12"
 bincode = "0.8"
 
 [lib]
