@@ -30,9 +30,7 @@ impl JitCode {
     /// Cast the current code into the proper fn-type given as parameter of
     /// this generic function.
     pub unsafe fn get_fn(&self) -> *const () {
-        unsafe {
-            mem::transmute(self.code.ptr(self.start))
-        }
+        mem::transmute(self.code.ptr(self.start))
     }
 }
 
@@ -1256,70 +1254,23 @@ impl Compiler {
             return Err(Error::NYI("Reading arguments from the stack."));
         };
 
-        // Consume all the registers which are used for arguments.
-        for (&(r, sz), reg) in cu.args_defs.iter().zip(self::asm::ABI_ARGS.iter()) {
-            let reg = *reg;
-            if sz <= 8 {
-                self.register(r, vec![AllocInfo{ reg, off: 0, sz }])
-            } else {
-                self.register(r, vec![AllocInfo{ reg, off: 0, sz: 8 }])
-            }
-            self.take(reg);
+        // Consume all the registers which are by arguments. The arguments would
+        // be pushed on the stack as soon as we see SetFramePtr.
+        for (&_, reg) in cu.args_defs.iter().zip(self::asm::ABI_ARGS.iter()) {
+            // TODO: Hum ... do we have to support argument given over 2 registers here?
+            self.take(*reg);
         }
-
-        /*
-        // Generate code for loading arguments values into registers, if
-        // they are larger than a single register, then they are assumed to
-        // be pointers to the value.
-        for (&(r, sz), ar) in cu.args_defs.iter().zip(self::asm::ABI_ARGS.iter()) {
-            if sz > 8 {
-                let ar = *ar;
-                let mut off = 0;
-                let mut alloc = vec![];
-                while off < sz {
-                    match sz - off {
-                        1 => {
-                            let reg = self.allocate(1)?;
-                            self.asm.movb_mr(ar, off as i32, reg);
-                            alloc.push(AllocInfo{ reg, sz: 1, off });
-                            off += 1;
-                        }
-                        2 | 3 => {
-                            let reg = self.allocate(2)?;
-                            self.asm.movw_mr(ar, off as i32, reg);
-                            alloc.push(AllocInfo{ reg, sz: 2, off });
-                            off += 2;
-                        }
-                        4 | 5 | 6 | 7 => {
-                            let reg = self.allocate(4)?;
-                            self.asm.movl_mr(ar, off as i32, reg);
-                            alloc.push(AllocInfo{ reg, sz: 4, off });
-                            off += 4;
-                        }
-                        _ => {
-                            let reg = self.allocate(4)?;
-                            self.asm.movq_mr(ar, off as i32, reg);
-                            alloc.push(AllocInfo{ reg, sz: 8, off });
-                            off += 8;
-                        }
-                    }
-                }
-                self.unregister(r);
-                self.register(r, alloc);
-            }
-        }
-         */
 
         // Compile each basic block.
         for (id, block) in cu.blocks.iter().enumerate() {
             println!("Compile Block {}:", id);
-            self.compile_block(id, block)?
+            self.compile_block(id, block, &cu.args_defs)?
         }
 
         self.finalize()
     }
 
-    fn compile_block(&mut self, id: usize, block: &lir::BasicBlockData) -> Result<(), Error> {
+    fn compile_block(&mut self, id: usize, block: &lir::BasicBlockData, args_defs: &Vec<lir::ArgDef>) -> Result<(), Error> {
         let label = self.bb_labels[id];
         self.asm.backend.dynamic_label(label);
 
@@ -1353,7 +1304,7 @@ impl Compiler {
 
         for inst in block.insts.iter() {
             println!("  Compile Inst: {:?}", inst);
-            self.compile_inst(inst)?
+            self.compile_inst(inst, args_defs)?
         }
 
         self.compile_terminator(&block.end)?;
@@ -1513,7 +1464,7 @@ impl Compiler {
         val_ptr.as_ref::<'static>().unwrap()
     }
 
-    fn compile_inst(&mut self, inst: &lir::Inst) -> Result<(), Error> {
+    fn compile_inst(&mut self, inst: &lir::Inst, args_defs: &Vec<lir::ArgDef>) -> Result<(), Error> {
         use lir::Inst::*;
         match inst {
             &SetFramePtr(fp, _sz, stack_size) => {
@@ -1525,6 +1476,63 @@ impl Compiler {
                         ; sub rsp, stack_size as _
                 );
                 self.register(fp, vec![AllocInfo{ reg: Register::Rbp, off: 0, sz: 8 }]);
+
+                // Generate code which copy the arguments from their argument register
+                // to the stack, this might involve copying larger structures as well
+                // from the pointer if not given by value.
+                for (&(off, sz, by_value), ar) in args_defs.iter().zip(self::asm::ABI_ARGS.iter()) {
+                    let off = 0 - (off as isize) - (sz as isize);
+                    let ar = *ar;
+                    println!("    Copy {:?} to offset {:?} with size {:?}", ar, off, sz);
+                    if by_value {
+                        // ar is a value which needs to be copied to the stack.
+                        match sz {
+                            1 => self.asm.movb_rm(ar, Register::Rbp, off as i32),
+                            2 | 3 => self.asm.movw_rm(ar, Register::Rbp, off as i32),
+                            4 | 5 | 6 | 7 =>
+                                self.asm.movl_rm(ar, Register::Rbp, off as i32),
+                            _ => self.asm.movq_rm(ar, Register::Rbp, off as i32),
+                        }
+                    } else {
+                        // ar is a pointer to the data which need to be copied
+                        // to the stack. We generate sequences of load and store
+                        // instructions.
+                        let mut arg_off = 0;
+                        while arg_off < sz {
+                            match sz - arg_off {
+                                1 => {
+                                    let tmp = self.allocate(1)?;
+                                    self.asm.movb_mr(ar, arg_off as i32, tmp);
+                                    self.asm.movb_rm(tmp, Register::Rbp, (arg_off as isize + off) as i32);
+                                    arg_off += 1;
+                                    self.free(tmp);
+                                }
+                                2 | 3 => {
+                                    let tmp = self.allocate(2)?;
+                                    self.asm.movw_mr(ar, arg_off as i32, tmp);
+                                    self.asm.movw_rm(tmp, Register::Rbp, (arg_off as isize + off) as i32);
+                                    arg_off += 2;
+                                    self.free(tmp);
+                                }
+                                4 | 5 | 6 | 7 => {
+                                    let tmp = self.allocate(4)?;
+                                    self.asm.movl_mr(ar, arg_off as i32, tmp);
+                                    self.asm.movl_rm(tmp, Register::Rbp, (arg_off as isize + off) as i32);
+                                    arg_off += 4;
+                                    self.free(tmp);
+                                }
+                                _ => {
+                                    let tmp = self.allocate(4)?;
+                                    self.asm.movq_mr(ar, arg_off as i32, tmp);
+                                    self.asm.movq_rm(tmp, Register::Rbp, (arg_off as isize + off) as i32);
+                                    arg_off += 8;
+                                    self.free(tmp);
+                                }
+                            }
+                        }
+                    }
+                    self.free(ar);
+                }
             },
             &Static(out, static_offset, static_size) => {
                 // Load the content from the static pointer, and convert it
@@ -2144,10 +2152,12 @@ impl Compiler {
     }
 
     fn finalize(self) -> Result<JitCode, Error> {
-        match self.asm.backend.finalize() {
+        let res = match self.asm.backend.finalize() {
             // TODO: transmute and return a class which implements Fn types.
             Ok(buf) => Ok(JitCode { code: buf, start: self.start }),
             Err(_) => Err(Error::Finalize),
-        }
+        };
+        println!("Compilation finished");
+        res
     }
 }

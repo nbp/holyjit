@@ -11,7 +11,7 @@ pub struct CompilationUnit {
     pub stack_size: usize,
 
     /// Ordered list of arguments, with their associated registers.
-    pub args_defs: Vec<RegDef>,
+    pub args_defs: Vec<ArgDef>,
 
     /// List of basic blocks of a given function.
     pub blocks: Vec<BasicBlockData>,
@@ -90,6 +90,8 @@ pub enum Terminator {
 pub type Sz = usize;
 pub type Reg = usize;
 pub type Imm = isize;
+pub type ByValue = bool;
+pub type ArgDef = (Imm, Sz, ByValue);
 pub type RegDef = (Reg, Sz);
 pub type RangeInclusive = (Imm, Imm);
 

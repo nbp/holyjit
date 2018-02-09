@@ -3,20 +3,20 @@
 
 // extern crate syntax;
 extern crate rustc;
+extern crate rustc_mir;
+// extern crate rustc_typeck;
 extern crate rustc_data_structures;
 extern crate rustc_const_math;
-extern crate rustc_plugin;
+extern crate syntax_pos;
 
-use rustc::mir::transform::{MirPass, MirSource};
+use rustc_mir::transform::{MirPass, MirSource};
 use rustc::mir::{Mir, self};
 // use rustc::mir::visit::MutVisitor;
 use rustc::ty::{self, TyCtxt};
 use rustc::middle::const_val::ConstVal;
 use rustc_const_math::ConstInt;
 use rustc::hir::def_id::DefId;
-
-use rustc_plugin::Registry;
-use std::rc::Rc;
+use rustc::hir;
 
 // Used to express the Mir into the Lir used for the Jit compilation.
 extern crate holyjit_lib;
@@ -93,8 +93,9 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
     /// HolyJitFnWrapper.
     fn is_placeholder(&self, mir: &mut Mir<'tcx>) -> bool {
         // Filter out any mir which does not define a constant.
-        match self.source {
-            MirSource::Const(_) => (),
+        let id = self.tcx.hir.as_local_node_id(self.source.def_id).unwrap();
+        match self.tcx.hir.body_owner_kind(id) {
+            hir::BodyOwnerKind ::Const => (),
             _ => return false
         };
 
@@ -103,12 +104,12 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         // jit! macro.
         //
         // mir.return_ty == "holyjit::HolyJitFnWrapper<...>"
-        match mir.return_ty.ty_adt_def() {
+        match mir.return_ty().ty_adt_def() {
             Some(adt) => {
                 let wrpr = self.tcx.def_key(adt.did).disambiguated_data.data;
-                let wrpr = wrpr.get_opt_name().unwrap().as_str();
+                let wrpr = wrpr.get_opt_name().unwrap();
                 // println!("CollectFunctionsIndex: {}", wrpr);
-                wrpr == "HolyJitFnWrapper"
+                "HolyJitFnWrapper" == wrpr
             },
             None => false
         }
@@ -143,7 +144,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             for statement in &data.statements {
                 match *statement {
                     mir::Statement { kind: mir::StatementKind::Assign(
-                        mir::Lvalue::Local(assign_local),
+                        mir::Place::Local(assign_local),
                         ref rvalue
                     ), ref source_info}
                     if assign_local == fn_local => {
@@ -167,7 +168,9 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         // Deconstruct the operand of the cast operator to find the DefId of
         // the function.
         let fn_id = match fn_ref.literal {
-            mir::Literal::Value { value: ConstVal::Function(did, _) } => did,
+            mir::Literal::Value {
+                value: &ty::Const { val: ConstVal::Function(did, _), .. }
+            } => did,
             mir::Literal::Value { .. } => return Err(Error::NoFnConstLiteral),
             _ => return Err(Error::NoLiteralOperand),
         };
@@ -181,7 +184,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
 
     /// This function convert the Mir of the wrapped function into a vector
     /// of serialized graph, which would be deserialized by the Jit library.
-    fn serialize_mir(&self, fn_id: DefId, src_info: mir::SourceInfo) -> Result<(Vec<u8>, Vec<mir::Rvalue<'tcx>>), Error> {
+    fn serialize_mir(&self, fn_id: DefId, src_info: mir::SourceInfo, nb_promoted: usize) -> Result<(Vec<u8>, Vec<mir::Rvalue<'tcx>>, Vec<mir::Mir<'tcx>>), Error> {
 
         let fn_mir = ty::queries::optimized_mir::try_get(self.tcx, src_info.span, fn_id);
         let fn_mir = match fn_mir {
@@ -195,7 +198,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             _ => return Err(Error::FunctionIsNotAvailable),
         };
 
-        let trans = trans::Transpiler::new(self.tcx, fn_id);
+        let trans = trans::Transpiler::new(self.tcx, fn_id, nb_promoted);
         Ok(trans.convert(fn_mir)?)
     }
 
@@ -219,12 +222,14 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                 ty::TypeVariants::TyRef(ref region, ref tam) => {
                     match tam.ty.sty {
                         ty::TypeVariants::TyArray(t, l) if t == self.tcx.types.u8 => {
-                            if l != 1 {
+                            if l.val.to_const_int().unwrap().to_u64().unwrap() != 1 {
                                 return Err(Error::UnexpectedArrayLen)
                             }
-                            let arr_ty = ty::TypeVariants::TyArray(t, bytes.len());
-                            let ref_ty = ty::TypeVariants::TyRef(*region, ty::TypeAndMut{
-                                ty: self.tcx.mk_ty(arr_ty), ..*tam
+                            // TyArray(t, ..)
+                            let arr_ty = self.tcx.mk_array(t, bytes.len() as u64);
+                            let ref_ty = self.tcx.mk_ref(*region, ty::TypeAndMut{
+                                ty: arr_ty,
+                                ..*tam
                             });
                             Some(ref_ty)
                         }
@@ -232,21 +237,21 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                     }
                 },
                 ty::TypeVariants::TyArray(t, l) if t == self.tcx.types.u8 => {
-                    if l != 1 {
+                    if l.val.to_const_int().unwrap().to_u64().unwrap() != 1 {
                         return Err(Error::UnexpectedArrayLen)
                     }
                     if arr_local != None {
                         return Err(Error::MultipleArrayDefinitions)
                     }
                     arr_local = Some(idx);
-                    let arr_ty = ty::TypeVariants::TyArray(t, bytes.len());
+                    let arr_ty = self.tcx.mk_array(t, bytes.len() as u64);
                     Some(arr_ty)
                 },
                 _ => None,
             };
 
             if let Some(arr_ty) = arr_ty {
-                mir.local_decls[idx].ty = self.tcx.mk_ty(arr_ty);
+                mir.local_decls[idx].ty = arr_ty;
             }
         }
 
@@ -256,7 +261,12 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         };
 
         // Create operands for each element of the vector.
-        let mk_literal = |i| mir::Literal::Value{ value: ConstVal::Integral(ConstInt::U8(i)) };
+        let mk_literal = |i| mir::Literal::Value{
+            value: self.tcx.mk_const(ty::Const {
+                val: ConstVal::Integral(ConstInt::U8(i)),
+                ty: self.tcx.types.u8
+            })
+        };
         let mk_operand = |cst: &mir::Constant<'tcx>, i| mir::Operand::Constant(Box::new(
             mir::Constant{ literal: mk_literal(i), ..cst.clone() }));
 
@@ -269,7 +279,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                 let cst = {
                     let op = match *statement {
                         mir::Statement { kind: mir::StatementKind::Assign(
-                            mir::Lvalue::Local(assign_local),
+                            mir::Place::Local(assign_local),
                             mir::Rvalue::Aggregate(_, ref op)
                         ), ..}
                         if assign_local == arr_local && op.len() == 1 => {
@@ -285,7 +295,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                 };
 
                 statement.kind = mir::StatementKind::Assign(
-                    mir::Lvalue::Local(arr_local),
+                    mir::Place::Local(arr_local),
                     mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Array(self.tcx.types.u8)),
                                            bytes.into_iter().map(|i| mk_operand(&cst, i)).collect())
                 );
@@ -311,14 +321,20 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
     /// of the referenced content.
     ///
     /// All rvalues are supposed to be static:
-    ///   Rvalue::Ref(region, mut, Lvalue::Static(box Static{ def_id, ty }))
-    fn replace_defs(&self, mir: &mut Mir<'tcx>, statics: Vec<mir::Rvalue<'tcx>>) -> Result<(), Error> {
+    ///   Rvalue::Ref(region, mut, Place::Static(box Static{ def_id, ty }))
+    fn replace_defs(&self, mir: &mut Mir<'tcx>, statics: Vec<mir::Rvalue<'tcx>>, promoted: Vec<mir::Mir<'tcx>>) -> Result<(), Error> {
+        // Addcopied promoted Mir, copied from the function body, and references
+        // by the rvalue defs.
+        for m in promoted.into_iter() {
+            mir.promoted.push(m);
+        }
+
         // Create references to the extracted static definitions' types.
         let tys : Vec<_> =
             statics.iter()
             // TODO: We need to create a reference to the statics types.
             .map(|rv| match rv {
-                &mir::Rvalue::Ref(ref region, _, mir::Lvalue::Static(ref st)) =>
+                &mir::Rvalue::Ref(ref region, _, mir::Place::Static(ref st)) =>
                     // region == tcx.types.re_erased
                     self.tcx.mk_imm_ref(region.clone(), st.ty),
                 &mir::Rvalue::Use(mir::Operand::Constant(ref constant)) =>
@@ -424,7 +440,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                 match *statement {
                     // replace the constant tuple.
                     mir::Statement { kind: mir::StatementKind::Assign(
-                        mir::Lvalue::Local(assign_local),
+                        mir::Place::Local(assign_local),
                         mir::Rvalue::Aggregate(_, _)
                     ), ..}
                     if assign_local == tup_local => {
@@ -432,13 +448,13 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                     },
                     // Replace the cast type.
                     mir::Statement { kind: mir::StatementKind::Assign(
-                        mir::Lvalue::Local(assign_local),
+                        mir::Place::Local(assign_local),
                         mir::Rvalue::Cast(ref ck, ref op, _)
                     ), ..}
                     if coerce_locals.contains(&assign_local) => {
                         cast_idx = Some(st_idx);
                         cast_rep = Some(mir::StatementKind::Assign(
-                            mir::Lvalue::Local(assign_local),
+                            mir::Place::Local(assign_local),
                             mir::Rvalue::Cast(ck.clone(), op.clone(), coerce_ty.unwrap())
                         ));
                     },
@@ -463,18 +479,18 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
             .collect();
 
         // Create a list of local operands of the tuple.
+        // We move the operands computed from the locals into the array.
         let local_ops : Vec<_> =
             local_ids.iter()
-            .map(|idx| mir::Operand::Consume(mir::Lvalue::Local(idx.clone())))
+            .map(|idx| mir::Operand::Move(mir::Place::Local(idx.clone())))
             .collect();
 
+        // Create locals and initialize them.
         let mut stmt_before : Vec<_> =
             local_ids.iter().zip(statics.iter())
             .fold(vec![],|mut stmts, (idx, rv)| {
                 stmts.push(mir::Statement {
-                    kind: mir::StatementKind::StorageLive(
-                        mir::Lvalue::Local(idx.clone())
-                    ),
+                    kind: mir::StatementKind::StorageLive(idx.clone()),
                     source_info: mir::SourceInfo {
                         span: Default::default(),
                         scope: mir::ARGUMENT_VISIBILITY_SCOPE,
@@ -482,7 +498,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                 });
                 stmts.push(mir::Statement {
                     kind: mir::StatementKind::Assign(
-                        mir::Lvalue::Local(idx.clone()),
+                        mir::Place::Local(idx.clone()),
                         rv.clone()
                     ),
                     source_info: mir::SourceInfo {
@@ -493,12 +509,11 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
                 stmts
             });
 
+        // Remove the storage associate to each local.
         let mut stmt_after : Vec<_> =
             local_ids.iter().fold(vec![], |mut stmts, idx| {
                 stmts.push(mir::Statement {
-                    kind: mir::StatementKind::StorageDead(
-                        mir::Lvalue::Local(idx.clone())
-                    ),
+                    kind: mir::StatementKind::StorageDead(idx.clone()),
                     source_info: mir::SourceInfo {
                         span: Default::default(),
                         scope: mir::ARGUMENT_VISIBILITY_SCOPE,
@@ -518,7 +533,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         let data = &mut mir[insert_block];
         data.statements[tuple_idx].kind =
             mir::StatementKind::Assign(
-                mir::Lvalue::Local(tup_local),
+                mir::Place::Local(tup_local),
                 mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Tuple),
                                        local_ops)
             );
@@ -552,7 +567,8 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
 
         // Step 3: Convert the Mir of function into HolyJit representation
         // and serialize it.
-        let (bytes, defs) = self.serialize_mir(fn_id, src_info).unwrap_or_else(|e|
+        let nb_promoted = mir.promoted.len();
+        let (bytes, defs, promoted) = self.serialize_mir(fn_id, src_info, nb_promoted).unwrap_or_else(|e|
             panic!("Fail to convert the wrapped function: {:?}", e),
         );
 
@@ -561,7 +577,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
         self.replace_bytes(mir, bytes).unwrap_or_else(|e|
             panic!("Fail to attach the serialized function: {:?}", e),
         );
-        self.replace_defs(mir, defs).unwrap_or_else(|e|
+        self.replace_defs(mir, defs, promoted).unwrap_or_else(|e|
             panic!("Fail to attach static references: {:?}", e),
         );
     }
@@ -569,7 +585,7 @@ impl<'a, 'tcx> AttachJitGraph<'a, 'tcx> {
 
 /// This structure is registered as a MirPass and is used to deletage to
 /// AttachJitGraph implementation.
-struct AttachFnGraphOnCst;
+pub struct AttachFnGraphOnCst;
 impl MirPass for AttachFnGraphOnCst {
     fn run_pass<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                           src: MirSource, mir: &mut Mir<'tcx>)
@@ -581,9 +597,4 @@ impl MirPass for AttachFnGraphOnCst {
 
         attach_jit.run_pass(mir);
     }
-}
-
-#[plugin_registrar]
-pub fn plugin_registrar(reg: &mut Registry) {
-    reg.register_opt_mir_pass(Rc::new(AttachFnGraphOnCst));
 }

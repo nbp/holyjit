@@ -1,5 +1,4 @@
-#![feature(plugin, custom_attribute)]
-#![plugin(holyjit_plugin)]
+#![feature(custom_attribute)]
 #![feature(unboxed_closures)]
 #[macro_use] extern crate holyjit_lib as hj;
 
@@ -65,7 +64,11 @@ fn eval_impl(_jc: hj::JitContext, program: String) -> Result<(), ()> {
 }
 
 fn main() {
+    let prog = "++";
+    // Run without the Jit.
     let jc : hj::JitContext = Default::default();
-    let res = eval(jc, "++".into());
-    res.unwrap();
+    eval_impl(jc, prog.into()).unwrap();
+    // Run with the Jit.
+    let jc : hj::JitContext = Default::default();
+    eval(jc, prog.into()).unwrap();
 }

@@ -1,17 +1,26 @@
 [package]
-name = "holyjit"
+name = "holyjit_pkg"
 version = "0.0.0"
 authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
 
 [workspace]
 members = [
   "lib",
-  "plugin"
+  "plugin",
+  "bin"
 ]
 
 [dependencies]
 holyjit_lib = { path = "./lib" }
 holyjit_plugin = { path = "./plugin" }
+holyjit = { path = "./bin" }
 
+# Before running any tests or examples, make sure to set the RUSTC_WRAPPER as
+# follow:
+#
+# export RUSTC_WRAPPER=$PWD/rustc.sh
+#
+# This wrapper will choose whether to start holyjit as a compiler instead of
+# starting the default rustc compiler.
 [[example]]
 name = "brainfuck"

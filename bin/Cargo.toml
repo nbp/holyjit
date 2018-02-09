@@ -1,0 +1,7 @@
+[package]
+name = "holyjit"
+version = "0.0.0"
+authors = ["Nicolas B. Pierron <nicolas.b.pierron@gmail.com>"]
+
+[dependencies]
+holyjit_plugin = { path = "../plugin" }

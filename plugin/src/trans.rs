@@ -13,6 +13,8 @@ use rustc::middle::lang_items::DropInPlaceFnLangItem;
 use rustc_const_math::ConstUsize;
 use rustc_data_structures::indexed_vec::Idx;
 
+use syntax_pos::DUMMY_SP;
+
 use holyjit_lib::lir;
 
 use bincode;
@@ -47,8 +49,16 @@ pub struct Transpiler<'a, 'tcx: 'a> {
     // represented by a number. This number is used for allocating new
     // registers in the MIR.
     last_reg: lir::Reg,
+
+    /// Map indexes of the function promoted MIR, to indexes of the of the
+    /// contant promoted MIR.
+    promoted_map: HashMap<mir::Promoted, mir::Promoted>,
+    // Number of promoted blocks which are already listed in the constant MIR
+    // before attaching any new promoted MIR ot it.
+    promoted_idx: usize,
 }
 
+#[derive(Debug)]
 struct Local<'tcx> {
     _idx: mir::Local,
     ty: ty::Ty<'tcx>,
@@ -59,7 +69,7 @@ struct Local<'tcx> {
 
 /// Determine if the address or the value should be returned to the caller.
 #[derive(Debug, Copy, Clone)]
-enum LvalueCtx {
+enum PlaceCtx {
     Value,
     Address,
     RefSlice,
@@ -70,6 +80,11 @@ pub enum Error {
     UnknownType,
     TooLargeType,
 
+    // Validate statement is used by Miri to ensure that the content of a given
+    // place contains data which correspond to the type assumption. Maybe we
+    // could later generate proper assertions as well.
+    ValidateStmt,
+
     /// Inline Assembly code is not supported for the moment, and probably
     /// would not be in the future versions of HolyJit.
     InlineAssembly,
@@ -77,13 +92,9 @@ pub enum Error {
     /// Serialization error while converting the Lir into a vector of bytes.
     Serialize,
 
-    /// LvalueCtx::RefSlice is used to indicate that a Deref projection is
+    /// PlaceCtx::RefSlice is used to indicate that a Deref projection is
     /// not supposed to do anything because it would depend on the consumer.
     UnexpectedRefSliceCtx,
-
-    /// LvalueCtx::RefSlice is used to indicate that a Deref projection is
-    /// not supposed to do anything because it would depend on the consumer.
-    UnexpectedIndexBase,
 
     /// Not Yet Implemented.
     NYI,
@@ -116,8 +127,9 @@ impl<'tcx> From<Box<bincode::ErrorKind>> for Error {
     }
 }
 
+// TODO: Have a look at Rust's src/librustc_trans/context.rs , and how CodegenCx is built.
 impl<'a, 'tcx> Transpiler<'a, 'tcx> {
-    pub fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>, fn_id: DefId) -> Self {
+    pub fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>, fn_id: DefId, nb_promoted: usize) -> Self {
         Self {
             tcx: tcx,
             param_env: tcx.param_env(fn_id),
@@ -130,9 +142,38 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             statics: vec![],
             statics_size: 0,
             last_reg: 1,
+            promoted_map: HashMap::new(),
+            promoted_idx: nb_promoted,
         }
     }
 }
+
+/*
+impl<'a, 'tcx> ty::layout::HasDataLayout for &'a Transpiler<'a, 'tcx> {
+    fn data_layout(&self) -> &ty::layout::TargetDataLayout {
+        &self.tcx.data_layout
+    }
+}
+
+impl<'a, 'tcx> ty::layout::HasTyCtxt<'tcx> for &'a Transpiler<'a, 'tcx> {
+    fn tcx<'b>(&'b self) -> TyCtxt<'b, 'tcx, 'tcx> {
+        self.tcx
+    }
+}
+*/
+/*
+impl<'a, 'tcx> LayoutOf<Ty<'tcx>> for &'a Transpiler<'a, 'tcx> {
+    type TyLayout = TyLayout<'tcx>;
+
+    fn layout_of(self, ty: Ty<'tcx>) -> Self::TyLayout {
+        self.tcx.layout_of(ty::ParamEnv::empty(traits::Reveal::All).and(ty))
+            .unwrap_or_else(|e| match e {
+                LayoutError::SizeOverflow(_) => panic!("LayoutError::SizeOverflow"),
+                _ => panic!("failed to get layout for `{}`: {}", ty, e)
+            })
+    }
+}
+*/
 
 /// This type correspons to the sequences of instructions build by the
 /// statements content. Each have a return type and a return register.
@@ -141,9 +182,12 @@ struct InstSeq<'tcx>(Vec<lir::Inst>, lir::Reg, ty::Ty<'tcx>);
 struct TermSeq(Vec<lir::Inst>, lir::Terminator);
 
 impl<'a, 'tcx> Transpiler<'a, 'tcx> {
-    pub fn convert(mut self, mir: &mir::Mir<'tcx>) -> Result<(Vec<u8>, Vec<mir::Rvalue<'tcx>>), Error> {
+    // This function output a vector of bytes which corresponds to the LIR, a
+    // vector of rvalue which corresponds to all statics & promoted indexes, and
+    // a vector of promoted blocks.
+    pub fn convert(mut self, mir: &mir::Mir<'tcx>) -> Result<(Vec<u8>, Vec<mir::Rvalue<'tcx>>, Vec<mir::Mir<'tcx>>), Error> {
         let (args_defs, stack_size) = self.locals(mir)?;
-        self.graph(mir, stack_size, &args_defs)?;
+        self.graph(mir, stack_size)?;
 
         let blocks = mem::replace(&mut self.blocks, Vec::new());
 
@@ -155,9 +199,18 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         println!("lir:\n{}\n", lir);
         let bytes : Vec<u8> = bincode::serialize(&lir, bincode::Infinite)?;
 
+        // Copy promoted block to the constant, such that we can reference the
+        // same value (which are not supposed to be mutable.)
+        let mut promoted: Vec<_> = self.promoted_map.into_iter().map(|(tgt_idx, src_idx)|
+            (tgt_idx, mir.promoted[src_idx].clone())
+        ).collect();
+        promoted.sort_by(|a, b| a.0.cmp(&b.0));
+        let promoted : Vec<_> = promoted.into_iter().map(|a| a.1).collect();
+
         Ok((
             bytes,
-            self.statics
+            self.statics,
+            promoted
         ))
     }
 
@@ -167,7 +220,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     }
      */
 
-    fn locals(&mut self, mir: &mir::Mir<'tcx>) -> Result<(Vec<lir::RegDef>, usize), Error> {
+    fn locals(&mut self, mir: &mir::Mir<'tcx>) -> Result<(Vec<lir::ArgDef>, usize), Error> {
         // Loop over arguments and locals to find out about their sizes
         // (librustc/ty/layout.rs), and where they should be allocated.
         //
@@ -178,12 +231,11 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         // see librustc_mir/transform/inline.rs  (type_size_of)
         //
         let mut stack : usize = 0;
-        let args_size : usize = 0; // TODO: Cumulate the stack size.
-        let mut args_defs : Vec<lir::RegDef> = Vec::with_capacity(mir.arg_count);
+        let mut args_defs : Vec<lir::ArgDef> = Vec::with_capacity(mir.arg_count);
         for (local, decl) in mir.local_decls.iter_enumerated() {
-            let layout = decl.ty.layout(self.tcx, self.param_env)?;
-            let size = layout.size(&self.tcx.data_layout).bytes() as usize;
-            let align = layout.align(&self.tcx.data_layout).pref() as usize;
+            let layout = self.tcx.layout_of(self.param_env.and(decl.ty))?; // decl.ty.layout(self.tcx, self.param_env)?;
+            let size = layout.size.bytes() as usize;
+            let align = layout.align.pref() as usize; // (&self.tcx.data_layout)
             let local_kind = mir.local_kind(local);
             println!("local {:?} : {} =>: size: {} ; align: {:?} ; kind: {:?}", local, mir.local_decls[local].ty, size, align, local_kind);
 
@@ -199,25 +251,20 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 match local_kind {
                     mir::LocalKind::Arg => {
                         // Bump the stack pointer with the size of the local.
-                        let (off, args_size) = self.add_type(decl.ty, args_size)?;
-                        let reg = self.get_new_reg();
-                        let size = args_size - off;
+                        let (off, bump) = self.add_type(decl.ty, stack)?;
+                        stack = bump;
+                        let size = bump - off;
 
-                        // TODO: use proper pointer size.
-                        if size > 8 {
-                            // Arguments are pass by pointer, if larger than
-                            // a pointer size. (unless it is a fat_pointer,
-                            // or is this only for returned values?)
-                            args_defs.push((reg, 8));
-                        } else {
-                            args_defs.push((reg, size));
-                        }
+                        // Add the size of the content which is being copied,
+                        // the JIT-compiler will have to infer if this is a
+                        // pointer type or the content of it :/
+                        args_defs.push((off as lir::Imm, size, (size <= 8) as lir::ByValue));
 
                         Local {
                             _idx: local,
                             ty: decl.ty,
                             off, size,
-                            reg: Some(reg),
+                            reg: None,
                         }
                     },
                     mir::LocalKind::ReturnPointer |
@@ -267,7 +314,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         lir
     }
 
-    fn graph(&mut self, mir: &mir::Mir<'tcx>, stack_size: usize, args_defs: &Vec<lir::RegDef>) -> Result<(), Error> {
+    fn graph(&mut self, mir: &mir::Mir<'tcx>, stack_size: usize) -> Result<(), Error> {
         for (bb, bb_data) in mir.basic_blocks().iter_enumerated() {
             let lbb = self.get_block(bb);
             let mut lblock_insts : Vec<lir::Inst> = vec![];
@@ -280,7 +327,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 // the stack, and these arguments should only be used once
                 // in the entire graph, and marked as dead after the first
                 // assignment.
-                args_defs.clone()
+                vec![]
             } else {
                 vec![ (self.fp, 8 /* size of frame ptr */ ) ]
             };
@@ -288,7 +335,11 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             // Append the instructions needed for the execution of every
             // staements.
             for statement in &bb_data.statements {
-                let mut insts = self.statement(statement)?;
+                let mut insts = match self.statement(statement) {
+                    Ok(res) => res,
+                    Err(Error::ValidateStmt) => continue,
+                    e => { e?; panic!("The impossible happened") }
+                };
                 lblock_insts.append(&mut insts);
             };
 
@@ -313,6 +364,10 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
     fn statement(&mut self, statement: &mir::Statement<'tcx>) -> Result<Vec<lir::Inst>, Error> {
         match statement.kind {
+            mir::StatementKind::Validate(_, _) => {
+                // Used by Miri as an assertion mechanism.
+                Err(Error::ValidateStmt)
+            }
             mir::StatementKind::Assign(ref lvalue, ref rvalue) => {
                 // Collect the sequence of instruction to fetch the value.
                 let InstSeq(rv_insts, rv_reg, rv_ty) =
@@ -322,10 +377,10 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 // Collect the sequence of instruction which fetch the
                 // memory location.
                 let InstSeq(mut lv_insts, lv_reg, lv_ty) =
-                    self.lvalue(lvalue, LvalueCtx::Address).or_else(
+                    self.lvalue(lvalue, PlaceCtx::Address).or_else(
                         report_nyi!("StatementKind::Assign({:?}, _)", lvalue))?;
 
-                let lv_ty = lv_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
+                let lv_ty = lv_ty.builtin_deref(true).unwrap().ty;
                 let (_, lv_size) = self.add_type(lv_ty, 0)?;
                 let (_, rv_size) = self.add_type(rv_ty, 0)?;
 
@@ -364,6 +419,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     }
 
     fn reg_of_local(&self, index: mir::Local) -> Option<lir::Reg> {
+        // println!("reg_of_local({:?}) == {:?}", index, self.locals_map[&index]);
         self.locals_map[&index].reg
     }
     fn type_of_local(&self, index: mir::Local) -> ty::Ty<'tcx> {
@@ -377,8 +433,8 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     }
 
     fn offset_of(&self, ty: ty::Ty<'tcx>, field: &mir::Field) -> Result<usize, Error> {
-        let layout = ty.layout(self.tcx, self.param_env)?;
-        let off = layout.field_offset(&self.tcx.data_layout, field.index(), None).bytes();
+        let layout = self.tcx.layout_of(self.param_env.and(ty))?;
+        let off = layout.fields.offset(field.index()).bytes();
         println!("offset_of({:?}, {:?}) -> offset: {:?}  {{ layout: {:?} }}", ty, field, off, layout);
         Ok(off as usize)
     }
@@ -388,9 +444,9 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
     /// contains the offset of the given type, and the new bump-offset for
     /// futher allocations.
     fn add_type(&self, ty: ty::Ty<'tcx>, bump: usize) -> Result<(usize, usize), Error> {
-        let layout = ty.layout(self.tcx, self.param_env)?;
-        let size = layout.size(&self.tcx.data_layout).bytes() as usize;
-        let align = layout.align(&self.tcx.data_layout).pref() as usize;
+        let layout = self.tcx.layout_of(self.param_env.and(ty))?;
+        let size = layout.size.bytes() as usize;
+        let align = layout.align.pref() as usize;
 
         // align the bump offset.
         let miss_align = bump & (align - 1);
@@ -416,15 +472,61 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
         let bump = self.statics_size;
         let (off, bump) = self.add_type(ty, bump)?;
         self.statics_size = bump;
-        let layout = ty.layout(self.tcx, self.param_env)?;
+        let layout = self.tcx.layout_of(self.param_env.and(ty))?;
         println!("register_static:\n: {:?}\n: {:?}\n: {:?}\n: {:?}", rvalue, ty, bump - off, layout);
         Ok((off as lir::Imm, bump - off as lir::Sz))
     }
 
-    fn lvalue<'b>(&'b mut self, lvalue: &'b mir::Lvalue<'tcx>, lvctx: LvalueCtx) -> Result<InstSeq<'tcx>, Error>
+    fn register_promoted(&mut self, promoted: mir::Promoted) -> mir::Promoted {
+        // This function does not clone the promoted MIR, but only keep the
+        // index of which MIR needs to be cloned, such that when we reach back
+        // the top of the function MIR, we can clone all the necessary promoted
+        // MIR.
+        let idx = mir::Promoted::new(self.promoted_idx);
+        // (assume no duplicated?)
+        self.promoted_map.insert(idx, promoted);
+        self.promoted_idx += 1;
+        idx
+    }
+
+    fn local(&mut self, index: mir::Local) -> Result<InstSeq<'tcx>, Error>
+    {
+        if let Some(reg) = self.reg_of_local(index) {
+            let ty = self.type_of_local(index);
+            let ptr_size = 8; // TODO: use proper pointer size.
+            if self.size_of_local(index) > ptr_size {
+                let val = self.get_new_reg();
+                return Ok(InstSeq(vec![
+                    lir::Inst::Live(val),
+                    lir::Inst::Load(val, reg, self.size_of_local(index) as lir::Sz),
+                    lir::Inst::Dead(reg),
+                ], val, ty))
+            }
+            return Ok(InstSeq(vec![], reg, ty));
+        }
+        let off = self.get_new_reg();
+        let ptr = self.get_new_reg();
+        let reg = self.get_new_reg();
+        Ok(InstSeq(vec![
+            lir::Inst::Live(off),
+            // Compute the offset within the stack frame.
+            lir::Inst::CopyImm(off, self.offset_of_local(index) as lir::Imm,
+                               8 as lir::Sz /* size of pointer */),
+            lir::Inst::Live(ptr),
+            // Add the offset to the stack frame pointer.
+            lir::Inst::Add(ptr, self.fp, off),
+            lir::Inst::Dead(off),
+            lir::Inst::Live(reg),
+            // Add the offset to the stack frame pointer.
+            lir::Inst::Load(reg, ptr, self.size_of_local(index) as lir::Sz),
+            lir::Inst::Dead(ptr),
+        ], reg, self.type_of_local(index)))
+    }
+
+    fn lvalue<'b>(&'b mut self, lvalue: &'b mir::Place<'tcx>, lvctx: PlaceCtx) -> Result<InstSeq<'tcx>, Error>
     {
         match (lvalue, lvctx) {
-            (&mir::Lvalue::Local(index), LvalueCtx::Address) => {
+            (&mir::Place::Local(index), PlaceCtx::Address) => {
                 if let Some(_reg) = self.reg_of_local(index) {
                     return Err(Error::NYI);
                 }
@@ -445,7 +547,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     lir::Inst::Dead(off),
                 ], reg, ty))
             },
-            (&mir::Lvalue::Local(index), LvalueCtx::Value) => {
+            (&mir::Place::Local(index), PlaceCtx::Value) => {
                 if let Some(reg) = self.reg_of_local(index) {
                     let ty = self.type_of_local(index);
                     let ptr_size = 8; // TODO: use proper pointer size.
@@ -477,42 +579,42 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     lir::Inst::Dead(ptr),
                 ], reg, self.type_of_local(index)))
             },
-            (&mir::Lvalue::Static(ref def), _) => {
-                // Lvalue::Static seems to be always wrapped under a
+            (&mir::Place::Static(ref def), _) => {
+                // Place::Static seems to be always wrapped under a
                 // Rvalue::Ref, so forbid any lvalue of this type.
-                println!("Lvalue::Static(def_id: {:?}, ty: {:?}) within {:?}", def.def_id,  def.ty, lvctx);
-                unreachable!("Unexpected Lvalue::Static")
+                println!("Place::Static(def_id: {:?}, ty: {:?}) within {:?}", def.def_id,  def.ty, lvctx);
+                unreachable!("Unexpected Place::Static")
             }
-            (&mir::Lvalue::Projection(ref proj), ref lvctx) => {
+            (&mir::Place::Projection(ref proj), ref lvctx) => {
                 self.lvalue_projection(&proj, *lvctx).or_else(
-                    report_nyi!("mir::Lvalue::Projection(({:?})", proj))
+                    report_nyi!("mir::Place::Projection(({:?})", proj))
             }
 
-            (_, LvalueCtx::RefSlice) => Err(Error::UnexpectedRefSliceCtx),
+            (_, PlaceCtx::RefSlice) => Err(Error::UnexpectedRefSliceCtx),
         }
     }
 
-    fn lvalue_projection<'b>(&'b mut self, proj: &'b mir::LvalueProjection<'tcx>, lvctx: LvalueCtx) -> Result<InstSeq<'tcx>, Error>
+    fn lvalue_projection<'b>(&'b mut self, proj: &'b mir::PlaceProjection<'tcx>, lvctx: PlaceCtx) -> Result<InstSeq<'tcx>, Error>
     {
-        // Projection<'tcx, Lvalue<'tcx>, Operand<'tcx>, Ty<'tcx>>
+        // Projection<'tcx, Place<'tcx>, Operand<'tcx>, Ty<'tcx>>
         let mir::Projection { ref base, ref elem } = *proj;
         let InstSeq(mut base_insts, base_reg, base_ty) =
             match *elem {
                 mir::ProjectionElem::Index(_) =>
-                    self.lvalue(base, LvalueCtx::RefSlice)?,
+                    self.lvalue(base, PlaceCtx::RefSlice)?,
                 mir::ProjectionElem::Field(_, _) =>
-                    self.lvalue(base, LvalueCtx::Address)?,
-                _ => self.lvalue(base, LvalueCtx::Value)?
+                    self.lvalue(base, PlaceCtx::Address)?,
+                _ => self.lvalue(base, PlaceCtx::Value)?
             };
         match *elem {
             mir::ProjectionElem::Deref => {
                 let InstSeq(addr_insts, addr_reg, addr_ty) = InstSeq(base_insts, base_reg, base_ty);
 
                 match lvctx {
-                    LvalueCtx::Value => {
+                    PlaceCtx::Value => {
                         let mut insts = addr_insts;
                         let reg = self.get_new_reg();
-                        let res_ty = addr_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
+                        let res_ty = addr_ty.builtin_deref(true).unwrap().ty;
                         let (_, size) = self.add_type(res_ty, 0)?;
                         insts.append(&mut vec![
                             lir::Inst::Live(reg),
@@ -521,23 +623,23 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         ]);
                         Ok(InstSeq(insts, reg, res_ty))
                     }
-                    LvalueCtx::RefSlice => {
+                    PlaceCtx::RefSlice => {
                         // We are asking to dereference a fat-pointer, but
                         // we will either request the pointer of it or the
                         // length of it.
                         assert!(addr_ty.is_slice());
                         Ok(InstSeq(addr_insts, addr_reg, addr_ty))
                     }
-                    LvalueCtx::Address => {
+                    PlaceCtx::Address => {
                         Ok(InstSeq(addr_insts, addr_reg, addr_ty))
                     }
                 }
             }
             mir::ProjectionElem::Field(ref field, ref ty) => {
                 // Given a type, generate a field access for this type.
-                let struct_ty = base_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
+                let struct_ty = base_ty.builtin_deref(true).unwrap().ty;
                 match lvctx {
-                    LvalueCtx::Value => {
+                    PlaceCtx::Value => {
                         let mut insts = base_insts;
                         let imm = self.get_new_reg();
                         let addr = self.get_new_reg();
@@ -560,7 +662,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         ]);
                         Ok(InstSeq(insts, reg, ty))
                     }
-                    LvalueCtx::Address => {
+                    PlaceCtx::Address => {
                         let mut insts = base_insts;
                         let imm = self.get_new_reg();
                         let reg = self.get_new_reg();
@@ -580,26 +682,26 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         ]);
                         Ok(InstSeq(insts, reg, res_ty))
                     },
-                    LvalueCtx::RefSlice => Err(Error::UnexpectedRefSliceCtx),
+                    PlaceCtx::RefSlice => Err(Error::UnexpectedRefSliceCtx),
                 }
             }
-            mir::ProjectionElem::Index(ref operand) => {
+            mir::ProjectionElem::Index(ref index) => {
                 // base [ operand ]
                 let InstSeq(idx_insts, idx_reg, _idx_ty) =
-                    self.operand(operand).or_else(
-                        report_nyi!("mir::ProjectionElem::Index({:?})", operand))?;
+                    self.local(*index).or_else(
+                        report_nyi!("mir::ProjectionElem::Index({:?})", index))?;
 
-                let (InstSeq(mut base_insts, base_reg, base_ty), layout) = {
+                let InstSeq(mut base_insts, base_reg, base_ty) = {
                     // Assert that base is FatPointer given by value. Note
                     // we use the RefSlice type, to skip the Defer operation
                     // made on the lvalue.
                     assert!(base_ty.is_slice()); // TODO: add TyArray support?
-                    let slice_ty = base_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
+                    let slice_ty = base_ty.builtin_deref(true).unwrap().ty;
                     let elem_ty = slice_ty.builtin_index().unwrap();
                     let res_ty = self.tcx.mk_mut_ptr(elem_ty);
 
-                    let layout = base_ty.layout(self.tcx, self.param_env)?;
-                    let offset = layout.field_offset(&self.tcx.data_layout, 0, None);
+                    let layout = self.tcx.layout_of(self.param_env.and(base_ty))?;
+                    let offset = layout.fields.offset(ty::layout::FAT_PTR_ADDR);
                     let (_, size) = self.add_type(res_ty, 0)?;
 
                     let reg = self.get_new_reg();
@@ -609,26 +711,19 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         lir::Inst::Dead(base_reg),
                     ]);
 
-                    (InstSeq(base_insts, reg, res_ty), slice_ty.layout(self.tcx, self.param_env)?)
+                    InstSeq(base_insts, reg, res_ty)
                 };
 
                 // Compute the re-aligned size of the element.
-                let res_ty = base_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
-
-                let elem_sz = match layout {
-                    &ty::layout::Layout::Array { element_size, .. } =>
-                        element_size.bytes() as lir::Sz,
-                    _ => {
-                        return Err(Error::UnexpectedIndexBase);
-                    }
-                };
+                let res_ty = base_ty.builtin_deref(true).unwrap().ty;
+                let elem_sz = self.tcx.layout_of(self.param_env.and(res_ty))?.size.bytes() as lir::Sz;
 
                 // We are expecting a pointer, in both cases.
                 self.check_same_size(base_ty, self.tcx.types.usize)?;
                 let (_, idx_size) = self.add_type(self.tcx.types.usize, 0)?;
 
                 match lvctx {
-                    LvalueCtx::Value => {
+                    PlaceCtx::Value => {
                         let imm = self.get_new_reg();
                         let mul = self.get_new_reg();
                         let reg = self.get_new_reg();
@@ -653,8 +748,8 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                         Ok(InstSeq(insts, val, res_ty))
                     }
-                    LvalueCtx::RefSlice => Err(Error::UnexpectedRefSliceCtx),
-                    LvalueCtx::Address => Err(Error::NYI),
+                    PlaceCtx::RefSlice => Err(Error::UnexpectedRefSliceCtx),
+                    PlaceCtx::Address => Err(Error::NYI),
                 }
             }
             _ => Err(Error::NYI)
@@ -678,7 +773,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     // Thus we have to fake a content of the same type, and
                     // in the place-holder structure added by the jit!
                     // macro, add a new reference to static variables.
-                    &mir::Lvalue::Static(ref def) => {
+                    &mir::Place::Static(ref def) => {
                         let ty = self.tcx.mk_imm_ref(region.clone(), def.ty);
                         let reg = self.get_new_reg();
                         let (off, sz) = self.register_static(rvalue, ty)?;
@@ -693,8 +788,8 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     // location in which the data is stored. So when a
                     // rvalue request the location of the lvalue, then we
                     // just return the unmodified lvalue.
-                    &mir::Lvalue::Local(_) =>
-                        self.lvalue(lvalue, LvalueCtx::Address).or_else(
+                    &mir::Place::Local(_) =>
+                        self.lvalue(lvalue, PlaceCtx::Address).or_else(
                             report_nyi!("mir::Rvalue::Ref(_, _, {:?})", lvalue)),
 
                     _ => Err(Error::NYI)
@@ -703,10 +798,10 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
             mir::Rvalue::Len(ref lvalue) => {
                 let InstSeq(lv_insts, lv_reg, lv_ty) =
-                    self.lvalue(lvalue, LvalueCtx::RefSlice).or_else(
+                    self.lvalue(lvalue, PlaceCtx::RefSlice).or_else(
                         report_nyi!("mir::Rvalue::Len({:?})", lvalue))?;
 
-                let layout = lv_ty.layout(self.tcx, self.param_env)?;
+                let layout = self.tcx.layout_of(self.param_env.and(lv_ty))?;
                 println!("mir::Rvalue::Len({:?})", lvalue);
                 println!("ty: {:?} / layout: {:?}", lv_ty, layout);
 
@@ -717,7 +812,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                 //assert_eq!(layout.field_count(), 2);
                 //assert_eq!(layout.field_type(&self.lcx, 1), self.tcx.types.usize);
-                let offset = layout.field_offset(&self.tcx.data_layout, 1, None);
+                let offset = layout.fields.offset(ty::layout::FAT_PTR_EXTRA);
                 let (_, size) = self.add_type(self.tcx.types.usize, 0)?;
                 // We are expecting a pointer, in both cases.
                 //self.check_same_size(lv_ty, self.tcx.types.usize)?;
@@ -834,20 +929,20 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                 let (ty, variant) = match **kind {
                     mir::AggregateKind::Array(ty) =>
-                        (self.tcx.mk_array(ty, operands.len()), 0),
+                        (self.tcx.mk_array(ty, operands.len() as u64), 0),
                     mir::AggregateKind::Tuple => {
                         let tys : Vec<_> = operands.iter().map(|op| {
                             let &InstSeq(_, _, ty) = op;
                             ty
                         }).collect();
-                        (self.tcx.intern_tup(&tys, true), 0)
+                        (self.tcx.intern_tup(&tys, false), 0)
                     }
                     mir::AggregateKind::Adt(def, variant, substs, _) =>
                         (self.tcx.mk_adt(def, substs), variant),
                     _ => return Err(Error::NYI)
                 };
 
-                let layout = ty.layout(self.tcx, self.param_env)?;
+                let layout = self.tcx.layout_of(self.param_env.and(ty))?;
                 let (_, size) = self.add_type(ty, 0)?;
 
                 // Initialize the space for the type to 0.
@@ -857,12 +952,13 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                     lir::Inst::CopyImm(reg, 0 as lir::Imm, size as lir::Sz),
                 ];
 
-                match *layout {
-                    ty::layout::Layout::Univariant { .. } => (),
-                    ty::layout::Layout::General { discr, .. } => {
+                let fields = match &layout.variants {
+                    &ty::layout::Variants::Single { .. } => &layout.fields,
+                    // Layout::Univariant -> Variants::Tagged { .. smae thing .. }
+                    &ty::layout::Variants::Tagged { ref discr, ref variants, .. } => {
                         // Initialize the discriminant
-                        let (_dty, sz) = match discr {
-                            ty::layout::Integer::I8 => (self.tcx.types.i8, 1),
+                        let (_dty, sz) = match discr.value {
+                            ty::layout::Primitive::Int(ty::layout::Integer::I8, _) => (self.tcx.types.i8, 1),
                             _ => {
                                 unreachable!("ty: {:?} / layout: {:?}", ty, layout);
                             }
@@ -875,17 +971,18 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                             lir::Inst::StoreInto(reg, discr_reg, 0, sz as lir::Sz),
                             lir::Inst::Dead(discr_reg),
                         ]);
+
+                        &variants[variant].fields
                     }
-                    _ => {
+                    _ => { // Variants::NicheFilling
                         return Err(Error::NYI);
                     }
-                }
+                };
 
                 // Add each operand
                 for (i, InstSeq(mut op_insts, op_reg, op_ty)) in operands.into_iter().enumerate() {
                     let (_, size) = self.add_type(op_ty, 0)?;
-                    let off = layout.field_offset(&self.tcx.data_layout,
-                                                  i, Some(variant)).bytes();
+                    let off = fields.offset(i).bytes();
                     insts.append(&mut op_insts);
                     insts.append(&mut vec![
                         lir::Inst::StoreInto(reg, op_reg,
@@ -897,22 +994,51 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
 
                 Ok(InstSeq(insts, reg, ty))
             }
-            _ => Err(Error::NYI)
+            mir::Rvalue::Discriminant(ref place) => {
+                // Get the place as a value.
+                let InstSeq(mut insts, reg, ty) = self.lvalue(place, PlaceCtx::Value)?;
+                // Extract the field which corresponds to the discriminant.
+                let layout = self.tcx.layout_of(self.param_env.and(ty))?;
+                // Read the discriminant of an ADT.
+                match &layout.variants {
+                    // What?! Rustc produces a discriminant rvalue on a type
+                    // which is neither a tagged place nor a niche, we should
+                    // not generate anything for such assignment.
+                    &ty::layout::Variants::Single { ref index } => {
+                        let ret = self.get_new_reg();
+                        insts.append(&mut vec![
+                            lir::Inst::Dead(reg),
+                            lir::Inst::CopyImm(ret, *index as lir::Imm, 1 as lir::Sz),
+                        ]);
+                        Ok(InstSeq(insts, ret, self.tcx.types.u8))
+                    }
+                    _ => {
+                        println!("rvalue: {:?}", rvalue);
+                        println!("Layout = {:?}", layout);
+                        Err(Error::NYI)
+                    }
+                }
+            }
+            _ => {
+                println!("rvalue: {:?}", rvalue);
+                Err(Error::NYI)
+            }
         }
     }
 
     fn operand(&mut self, operand: &mir::Operand<'tcx>) -> Result<InstSeq<'tcx>, Error> {
         match *operand {
-            mir::Operand::Consume(ref lvalue) => {
-                Ok(self.lvalue(lvalue, LvalueCtx::Value).or_else(
-                        report_nyi!("mir::Operand::Consume({:?})", lvalue))?)
+            mir::Operand::Copy(ref place) => {
+                Ok(self.lvalue(place, PlaceCtx::Value).or_else(
+                    report_nyi!("mir::Operand::Copy({:?})", place))?)
+            }
+            mir::Operand::Move(ref place) => {
+                Ok(self.lvalue(place, PlaceCtx::Value).or_else(
+                    report_nyi!("mir::Operand::Move({:?})", place))?)
             }
             mir::Operand::Constant(ref constant) => {
                 let res = match constant.literal.clone() {
-                    mir::Literal::Item { .. /*def_id, substs*/ } => {
-                        Err(Error::NYI)
-                    },
-                    mir::Literal::Value { ref value } if self.constval_use_static(value) => {
+                    mir::Literal::Value { ref value } if self.constval_use_static(&value.val) => {
 
                         // Load the static in a register.
                         let reg = self.get_new_reg();
@@ -948,11 +1074,27 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         ], reg, ty))
                     },
                     mir::Literal::Value { value } => {
-                        Ok(self.constval(value, constant.ty).or_else(
+                        Ok(self.constval(value.val, constant.ty).or_else(
                             report_nyi!("mir::Literal::Value: {:?} ", constant.literal))?)
                     },
-                    mir::Literal::Promoted { .. } => {
-                        Err(Error::NYI)
+                    mir::Literal::Promoted { index } => {
+                        // Duplicate the operand with the promoted value and
+                        // register it to be known at runtime.
+
+                        let ty = constant.ty;
+                        let index = self.register_promoted(index);
+                        let operand = mir::Operand::Constant(Box::new(mir::Constant {
+                            literal: mir::Literal::Promoted { index },
+                            ty: ty,
+                            span: constant.span,
+                        }));
+                        let rv = mir::Rvalue::Use(operand);
+                        let (off, sz) = self.register_static(&rv, ty)?;
+                        let reg = self.get_new_reg();
+                        Ok(InstSeq(vec![
+                            lir::Inst::Live(reg),
+                            lir::Inst::Static(reg, off, sz),
+                        ], reg, ty))
                     },
                 };
 
@@ -1011,9 +1153,9 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                 let (insts, value) = {
                     match self.ret_local {
                         Some(local) => {
-                            let fake_rv = mir::Lvalue::Local(local);
+                            let fake_rv = mir::Place::Local(local);
                             let InstSeq(insts, reg, _ty) =
-                                self.lvalue(&fake_rv, LvalueCtx::Value).or_else(
+                                self.lvalue(&fake_rv, PlaceCtx::Value).or_else(
                                     report_nyi!("mir::TerminatorKind::Return"))?;
                             (insts, Some(reg))
                         }
@@ -1102,17 +1244,18 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
                         let resume = self.new_block();
                         let target = self.get_block(*bb);
                         let InstSeq(mut ret_insts, ret_reg, ret_ty) =
-                            self.lvalue(lvalue, LvalueCtx::Address).or_else(
+                            self.lvalue(lvalue, PlaceCtx::Address).or_else(
                                 report_nyi!("Call(destination: {:?}, _)", lvalue))?;
-                        let ret_ty = ret_ty.builtin_deref(true, ty::LvaluePreference::NoPreference).unwrap().ty;
+                        let ret_ty = ret_ty.builtin_deref(true).unwrap().ty;
 
                         // TODO: check that the returned value is the same
                         // size as the lvalue storage space.
                         let (_, size) = self.add_type(ret_ty, 0)?;
 
-                        let layout = ret_ty.layout(self.tcx, self.param_env)?;
-                        let is_fat_ptr = match layout {
-                            &ty::layout::Layout::FatPointer{ .. } => true,
+                        let is_fat_ptr = match ret_ty.sty {
+                            ty::TyRawPtr(ref elem) |
+                            ty::TyRef(_, ref elem) => !elem.ty.is_sized(self.tcx, self.param_env, DUMMY_SP),
+                            ty::TyAdt(def, _) if def.is_box() => !ret_ty.boxed_ty().is_sized(self.tcx, self.param_env, DUMMY_SP),
                             _ => false,
                         };
 
@@ -1173,7 +1316,7 @@ impl<'a, 'tcx> Transpiler<'a, 'tcx> {
             }
             &mir::TerminatorKind::Drop { ref location, target, unwind } => {
                 let InstSeq(lv_insts, lv_reg, lv_ty) =
-                    self.lvalue(location, LvalueCtx::Address).or_else(
+                    self.lvalue(location, PlaceCtx::Address).or_else(
                         report_nyi!("Drop(location: {:?}, _)", location))?;
 
                 // see resolve_drop_in_place
