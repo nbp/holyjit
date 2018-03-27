@@ -86,24 +86,21 @@ that guards can later be converted into constraints.
 
 ## Using HolyJit
 
-At the moment HolyJit relies on a patched version of rustc, which allow to
-create compiler plugins. To use HolyJit, you will have to compile this
-custom rustc from the following repository:
+HolyJit is a rustc driver, which means that it has to be used in-place of rustc
+or as a rustc wrapper, i.e. by settings either the `RUSTC` or `RUSTC_WRAPPER`
+environment variable.
 
-https://github.com/nbp/rust/tree/register_opt_mir_pass
+When `holyjit` is used, the binary is instrumented the generated code with
+enough information to resume with the JIT compilation at runtime.
 
-Use the above rustc to compile the HolyJit library and plugin, as well as
-whatever project which depends on HolyJit.
-
-If you are using HolyJit library, but you are not using the plugin, then the
-JIT would not be enabled as would no data stored in the binary to be
-consumed by the JIT compiler at runtime.
+When `rustc` is used, a binary is still produced but the JIT is disabled as no
+data are stored in the binary to be consumed by the JIT compiler at runtime.
 
 To run tests, you can either run the test of the library with `cargo test`,
 or run the examples of HolyJit with:
 
 ```sh
-$ cargo run --example brainfuck --verbose
+$ RUSTC_WRAPPER=$(pwd)/rustc.sh cargo run --example brainfuck --verbose
 ```
 
 At the moment, HolyJit is far from being yet ready for production! This is
