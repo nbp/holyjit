@@ -1,7 +1,6 @@
 #![feature(custom_attribute)]
 #![feature(unboxed_closures)]
 #[macro_use] extern crate holyjit_lib as hj;
-use std::io::Write;
 
 fn print(x: u8) {
     print!("{}", x as char);
