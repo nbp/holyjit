@@ -1,7 +1,11 @@
 [package]
-name = "holyjit"
+name = "holyjit_bin"
 version = "0.0.0"
 authors = ["Nicolas B. Pierron <nicolas.b.pierron@gmail.com>"]
 
 [dependencies]
 holyjit_plugin = { path = "../plugin" }
+
+[[bin]]
+name = "holyjit"
+path = "src/main.rs"
