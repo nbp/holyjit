@@ -11,6 +11,9 @@ case $4 in
 esac
 
 if $wrap; then
+    # Apparently, on MacOS/X we seems to fail to link against rustc libraries.
+    # In the mean time, just add rust libraries to the LD_LIBRARY_PATH.
+    #export LD_LIBRARY_PATH=$(rustc --print sysroot)/lib
     for arg; do
         case $arg in
             # .../target/debug/deps/libholyjit_lib-abcdef.rlib
