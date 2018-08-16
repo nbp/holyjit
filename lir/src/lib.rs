@@ -28,6 +28,8 @@ extern crate serde_derive;
 extern crate serde;
 extern crate bincode;
 
+pub mod number;
+
 /// Automatically derive a hashing function for each type, to make sure that we
 /// can apply patches to a subset of instructions.
 use std::hash::{Hash, Hasher};
@@ -43,7 +45,8 @@ pub struct Unit {
     /// Unique Unit Identifier.
     pub id: UnitId,
 
-    /// Data flow, contains all the instructions and their operands, as well as the potentially memory dependencies.
+    /// Data flow, contains all the instructions and their operands, as well as
+    /// the potentially memory dependencies.
     pub data_flow: DataFlow,
 
     /// Control flow, contains all the blocks which are making references to the
@@ -137,12 +140,6 @@ pub struct Instruction {
     pub replaced_by: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)] /* derive(Hash)-manually */
-pub enum ConstData {
-    Unsigned(u64),
-    Signed(i64),
-    Float(f64),
-}
 #[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
 pub struct SwitchData {
     pub low: i32,
@@ -168,8 +165,8 @@ pub enum Opcode {
     Phi,
 
     /// Encode a constant.
-    /// (0 operand + data_index to ConstData)
-    Const(ConstData),
+    /// (0 operand)
+    Const(number::NumberValue),
 
     /// Cast is used to change the type interpretation of a Value without any content checks.
     /// (1 operand + data_index to CastData)
@@ -180,54 +177,54 @@ pub enum Opcode {
     OverflowFlag,
 
     /// Addition. (2 operands)
-    Add(NumberType),
+    Add(number::NumberType),
     /// Substraction. (2 operands: result = lhs - rhs)
-    Sub(NumberType),
+    Sub(number::NumberType),
     /// Multiplication. (2 operands)
-    Mul(NumberType),
+    Mul(number::NumberType),
     /// Division. (2 operands: result = lhs / rhs)
-    Div(NumberType),
+    Div(number::NumberType),
     /// Remainder. (2 operands: result = lhs % rhs)
-    Rem(NumberType),
+    Rem(number::NumberType),
     /// Sign-extend. (1 operand)
-    SignExt(SignedType),
+    SignExt(number::SignedType),
     /// Zero-extend. (1 operand)
-    ZeroExt(IntType),
+    ZeroExt(number::IntType),
 
     /// Truncate. (round towards zero) (1 operand)
-    Truncate(FloatType),
+    Truncate(number::FloatType),
     /// Round. (round towards nearest) (1 operand)
-    Round(FloatType),
+    Round(number::FloatType),
     /// Floor. (round towards -Inf) (1 operand)
-    Floor(FloatType),
+    Floor(number::FloatType),
     /// Ceil. (round towards +Inf) (1 operand)
-    Ceil(FloatType),
+    Ceil(number::FloatType),
 
     /// Bitwise exclusive or. (2 operands)
-    BwXor(IntType),
+    BwXor(number::IntType),
     /// Bitwise And. (2 operands)
-    BwAnd(IntType),
+    BwAnd(number::IntType),
     /// Bitwise Or. (2 operands)
-    BwOr(IntType),
+    BwOr(number::IntType),
     /// Bitwise Not. (2 operands)
-    BwNot(IntType),
+    BwNot(number::IntType),
     /// Shift left. (2 operands: result = lhs << rhs)
-    ShiftLeft(IntType),
+    ShiftLeft(number::IntType),
     /// Shift right. (2 operands: result = lhs >> rhs)
-    ShiftRight(SignedType),
+    ShiftRight(number::SignedType),
 
     /// Equal. (2 operands)
-    Eq(NumberType),
+    Eq(number::NumberType),
     /// Less than. (2 operands: result = lhs < rhs)
-    Lt(NumberType),
+    Lt(number::NumberType),
     /// Less than or equal. (2 operands: result = lhs <= rhs)
-    Le(NumberType),
+    Le(number::NumberType),
     /// Not equal. (2 operands)
-    Ne(NumberType),
+    Ne(number::NumberType),
     /// Greather than. (2 operands: result = lhs > rhs)
-    Gt(NumberType),
+    Gt(number::NumberType),
     // Greather than or equal. (2 operands: result = lhs >= rhs)
-    Ge(NumberType),
+    Ge(number::NumberType),
 
     /// StaticAddress is used to refer to data which is not yet known at compile
     /// time, but known at the execution, such as function pointer addresses.
@@ -312,26 +309,6 @@ pub enum Opcode {
     CallUnit(UnitId),
 }
 
-/// NumberType are used for math and bitwise operators.
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
-pub enum NumberType {
-    I(SignedType),
-    F(FloatType),
-}
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
-pub enum IntType {
-    I8, I16, I32, I64,
-}
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
-pub enum SignedType {
-    S(IntType),
-    U(IntType),
-}
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
-pub enum FloatType {
-    F32, F64,
-}
-
 /// ComplexType indexes are used to index an arithmetic type or an aggregated
 /// type, such as tuples, enums or structures within the Assembly.
 type ComplexTypeId = usize;
@@ -357,23 +334,6 @@ impl Opcode {
             Opcode::Call |
             Opcode::CallUnit(_) => true,
             _ => false,
-        }
-    }
-}
-
-impl Hash for ConstData {
-    fn hash<H : Hasher>(&self, state: &mut H) {
-        use std::mem;
-        mem::discriminant(self).hash(state);
-        match self {
-            &ConstData::Unsigned(v) => v.hash(state),
-            &ConstData::Signed(v) => v.hash(state),
-            &ConstData::Float(v) => {
-                assert_eq!(mem::size_of::<f64>(), mem::size_of::<u64>());
-                assert_eq!(mem::align_of::<f64>(), mem::align_of::<u64>());
-                let v : u64 = unsafe { mem::transmute_copy(&v) };
-                v.hash(state);
-            }
         }
     }
 }
@@ -444,7 +404,7 @@ mod tests {
     fn check_rehash() {
         let mut df = DataFlow::new();
         let v0 = df.add_ins(Instruction {
-            opcode: Opcode::Const(ConstData::Unsigned(1024)),
+            opcode: Opcode::Const(number::NumberValue::U32(1024)),
             operands: vec![],
             dependencies: vec![],
             replaced_by: None,
@@ -470,19 +430,19 @@ mod tests {
     fn check_replaced_by() {
         let mut df = DataFlow::new();
         let v0 = df.add_ins(Instruction {
-            opcode: Opcode::Const(ConstData::Unsigned(1)),
+            opcode: Opcode::Const(number::NumberValue::I32(1)),
             operands: vec![],
             dependencies: vec![],
             replaced_by: None,
         });
         let v1 = df.add_ins(Instruction {
-            opcode: Opcode::Add(NumberType::I(SignedType::U(IntType::I32))),
+            opcode: Opcode::Add(number::NumberType::I32),
             operands: vec![v0, v0],
             dependencies: vec![],
             replaced_by: None,
         });
         let v2 = df.add_ins(Instruction {
-            opcode: Opcode::Const(ConstData::Unsigned(2)),
+            opcode: Opcode::Const(number::NumberValue::I32(2)),
             operands: vec![v0],
             dependencies: vec![],
             replaced_by: None,
