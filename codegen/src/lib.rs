@@ -56,7 +56,7 @@ impl Context {
     /// Given an HolyJIT LIR Unit, convert it to a Cranelift function in order
     /// to generate the corresponding bytes, then allocate memory pages and map
     /// them as executable.
-    pub fn compile(&mut self, unit: &lir::Unit) -> error::LowerResult<JitCode> {
+    pub fn compile(&mut self, unit: &lir::unit::Unit) -> error::LowerResult<JitCode> {
         let &mut Context { ref mut ctx, ref isa, .. } = self;
         ctx.func = lower::convert(unit)?;
         let mut reloc_sink = exec_alloc::NullRelocSink {};
@@ -82,6 +82,13 @@ mod tests {
     use super::*;
     use std::mem;
 
+    use lir::unit::*;
+    use lir::data_flow::*;
+    use lir::number::*;
+    use lir::builder::*;
+    use lir::types::*;
+
+
     #[test]
     fn check_create_context() {
         let _ctx = Context::new();
@@ -90,9 +97,29 @@ mod tests {
 
     #[test]
     fn check_add1_unit() {
+        let mut ctx_bld = ContextBuilder::new();
+        let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
+        // Add the function signature.
+        let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
+        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32], vec![t_i32], CanUnwind(true)));
+        bld.set_signature(t_sig);
+        let s0 = bld.create_sequence();
+        {
+            bld.switch_to_sequence(s0);
+            let a0 = bld.unit_arg(0);
+            let v0 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
+            let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v0]);
+            bld.end_sequence(Instruction {
+                opcode: Opcode::Return,
+                operands: vec![v1],
+                dependencies: vec![],
+                replaced_by: None,
+            })
+        }
+        let add1_unit = bld.finish();
+
         let mut ctx = Context::new();
-        let simple_unit = lir::Unit::new(lir::UnitId::Function(0));
-        let code = ctx.compile(&simple_unit).unwrap();
+        let code = ctx.compile(&add1_unit).unwrap();
         let add1 : fn(i32) -> i32 = unsafe {
             mem::transmute(code.as_ptr())
         };

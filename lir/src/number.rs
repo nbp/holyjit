@@ -5,22 +5,22 @@ use std::hash::{Hash, Hasher};
 /// NumberType are used for math and bitwise operators. All other number types
 /// can be convert to this one, including NumberValue, using the `into()`
 /// method.
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum NumberType {
     U8, U16, U32, U64,
     I8, I16, I32, I64,
     F32, F64,
 }
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum IntType {
     U8, U16, U32, U64,
 }
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum SignedType {
     U8, U16, U32, U64,
     I8, I16, I32, I64,
 }
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum FloatType {
     F32, F64,
 }

@@ -6,11 +6,12 @@ use codegen::ir::types::*;
 use codegen::settings::{self, CallConv};
 use codegen::verifier::verify_function;
 
-use lir;
+use lir::unit::Unit;
 use error;
 
+
 /// Convert a LIR Unit into a Cranelift IR (Function).
-pub fn convert(_unit: &lir::Unit) -> error::LowerResult<Function> {
+pub fn convert(_unit: &Unit) -> error::LowerResult<Function> {
     let mut sig = Signature::new(CallConv::SystemV);
     sig.returns.push(AbiParam::new(I32));
     sig.params.push(AbiParam::new(I32));
@@ -22,10 +23,8 @@ pub fn convert(_unit: &lir::Unit) -> error::LowerResult<Function> {
         let block0 = builder.create_ebb();
         let x = Variable::new(0);
         let y = Variable::new(1);
-        let z = Variable::new(2);
         builder.declare_var(x, I32);
         builder.declare_var(y, I32);
-        builder.declare_var(z, I32);
         builder.append_ebb_params_for_function_params(block0);
 
         builder.switch_to_block(block0);
@@ -38,6 +37,8 @@ pub fn convert(_unit: &lir::Unit) -> error::LowerResult<Function> {
             let tmp = builder.ins().iconst(I32, 1);
             builder.def_var(y, tmp);
         }
+        let z = Variable::new(2);
+        builder.declare_var(z, I32);
         {
             let arg1 = builder.use_var(x);
             let arg2 = builder.use_var(y);
