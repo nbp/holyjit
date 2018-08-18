@@ -12,9 +12,12 @@ pub mod error;
 use codegen::settings::Configurable;
 use exec_alloc::{WrittableCode, ExecutableCode};
 
-/// This is a code generator context, which is used to lower a LIR Unit into
+use lir::unit;
+use lir::context;
+
+/// This is a reusable code generator, which is used to compile a LIR Unit to
 /// machine code.
-pub struct Context {
+pub struct CodeGenerator {
     ctx: codegen::Context,
     isa: Box<codegen::isa::TargetIsa>,
 }
@@ -24,7 +27,7 @@ pub struct JitCode {
     code: ExecutableCode,
 }
 
-impl Context {
+impl CodeGenerator {
     /// Create a lowering (code generator and executable page allocation)
     /// context for the architecture on which this code is running.
     pub fn new() -> Self {
@@ -56,9 +59,9 @@ impl Context {
     /// Given an HolyJIT LIR Unit, convert it to a Cranelift function in order
     /// to generate the corresponding bytes, then allocate memory pages and map
     /// them as executable.
-    pub fn compile(&mut self, unit: &lir::unit::Unit) -> error::LowerResult<JitCode> {
-        let &mut Context { ref mut ctx, ref isa, .. } = self;
-        ctx.func = lower::convert(unit)?;
+    pub fn compile(&mut self, lir_ctx: &context::Context, unit: &unit::Unit) -> error::LowerResult<JitCode> {
+        let &mut CodeGenerator { ref mut ctx, ref isa, .. } = self;
+        ctx.func = lower::convert(isa.as_ref(), lir_ctx, unit)?;
         let mut reloc_sink = exec_alloc::NullRelocSink {};
         let mut trap_sink = exec_alloc::NullTrapSink {};
         let code_size = ctx.compile(isa.as_ref())?;
@@ -90,36 +93,39 @@ mod tests {
 
 
     #[test]
-    fn check_create_context() {
-        let _ctx = Context::new();
+    fn create_code_generator() {
+        let _cg = CodeGenerator::new();
         assert!(true);
     }
 
     #[test]
-    fn check_add1_unit() {
+    fn add1_unit() {
         let mut ctx_bld = ContextBuilder::new();
-        let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
-        // Add the function signature.
-        let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32], vec![t_i32], CanUnwind(true)));
-        bld.set_signature(t_sig);
-        let s0 = bld.create_sequence();
-        {
-            bld.switch_to_sequence(s0);
-            let a0 = bld.unit_arg(0);
-            let v0 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
-            let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v0]);
-            bld.end_sequence(Instruction {
-                opcode: Opcode::Return,
-                operands: vec![v1],
-                dependencies: vec![],
-                replaced_by: None,
-            })
-        }
-        let add1_unit = bld.finish();
+        let add1_unit = {
+            let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
+            // Add the function signature.
+            let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
+            let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32], vec![t_i32], CanUnwind(true)));
+            bld.set_signature(t_sig);
+            let s0 = bld.create_sequence();
+            {
+                bld.switch_to_sequence(s0);
+                let a0 = bld.unit_arg(0);
+                let v0 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
+                let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v0]);
+                bld.end_sequence(Instruction {
+                    opcode: Opcode::Return,
+                    operands: vec![v1],
+                    dependencies: vec![],
+                    replaced_by: None,
+                })
+            }
+            bld.finish()
+        };
+        let ctx = ctx_bld.finish();
 
-        let mut ctx = Context::new();
-        let code = ctx.compile(&add1_unit).unwrap();
+        let mut cg = CodeGenerator::new();
+        let code = cg.compile(&ctx, &add1_unit).unwrap();
         let add1 : fn(i32) -> i32 = unsafe {
             mem::transmute(code.as_ptr())
         };

@@ -39,10 +39,6 @@ impl ContextBuilder {
         }
     }
 
-    pub fn finish(self) -> context::Context {
-        self.ctx
-    }
-
     pub fn get_rehash(&mut self) -> Opcode {
         Opcode::Rehash(self.ctx.get_hash_seed())
     }
@@ -75,6 +71,11 @@ impl ContextBuilder {
         self.ctx.get_type(id)
     }
 
+    /// Finalize and return the context which hold the type information of
+    /// multiple Units.
+    pub fn finish(self) -> context::Context {
+        self.ctx
+    }
 }
 
 impl<'a> UnitBuilder<'a> {
@@ -213,6 +214,7 @@ impl<'a> UnitBuilder<'a> {
         edit.unwind = Some(succ_idx);
     }
 
+    /// Finalize and (TODO) assert that the generate Unit is valid.
     pub fn finish(self) -> Unit {
         self.unit
     }

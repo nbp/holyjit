@@ -12,6 +12,8 @@ pub enum LowerError {
     CodeGen(CodegenError),
     Map(MapError),
     Protect,
+    UnitIsNotAFunction,
+    ParameterTypeNotLowered,
 }
 
 // TODO: impl Error for LowerError
