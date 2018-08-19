@@ -32,11 +32,11 @@ pub struct Unit {
 }
 
 /// Unique Unit identifier of an intrinsic.
-type IntrinsicId = usize;
+type IntrinsicId = u32;
 /// Unique unit identifier of a function.
-type FunctionId = usize;
+type FunctionId = u32;
 /// Unique unit identifier of a sub-set of a function.
-type SubSetId = usize;
+type SubSetId = u32;
 
 /// Unique Unit identifier.
 #[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy, PartialEq, Eq)]

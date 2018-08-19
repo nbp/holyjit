@@ -110,6 +110,7 @@ mod tests {
             let s0 = bld.create_sequence();
             {
                 bld.switch_to_sequence(s0);
+                bld.set_entry();
                 let a0 = bld.unit_arg(0);
                 let v0 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v0]);

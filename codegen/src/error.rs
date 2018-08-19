@@ -13,7 +13,7 @@ pub enum LowerError {
     Map(MapError),
     Protect,
     UnitIsNotAFunction,
-    ParameterTypeNotLowered,
+    ComplexTypeNotLowered,
 }
 
 // TODO: impl Error for LowerError

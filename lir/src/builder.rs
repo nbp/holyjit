@@ -116,7 +116,7 @@ impl<'a> UnitBuilder<'a> {
             return arg
         }
         let opcode = self.ctx.get_newhash();
-        self.dfg_add_ins(Instruction {
+        let arg = self.dfg_add_ins(Instruction {
             opcode,
             operands: vec![],
             dependencies: vec![],
@@ -152,7 +152,7 @@ impl<'a> UnitBuilder<'a> {
     pub fn add_ins(&mut self, ins: Instruction) -> Value {
         let value = self.dfg_add_ins(ins);
         let SequenceIndex(index) = self.sequence.unwrap();
-        assert!(self.unit.cfg.sequences[index].control.is_dummy());
+        debug_assert!(self.unit.cfg.sequences[index].control.is_dummy());
         self.unit.cfg.sequences[index].sequence.push(value);
         value
     }
@@ -170,13 +170,13 @@ impl<'a> UnitBuilder<'a> {
 
     /// Add a control flow instruction to end the current sequence.
     pub fn end_sequence(&mut self, ins: Instruction) {
-        assert!(ins.is_control());
+        debug_assert!(ins.is_control());
         let is_return = ins.opcode.is_return();
         let value = self.dfg_add_ins(ins);
         {
             let SequenceIndex(index) = self.sequence.unwrap();
             let edit = &mut self.unit.cfg.sequences[index];
-            assert!(edit.control.is_dummy());
+            debug_assert!(edit.control.is_dummy());
             edit.control = value;
         }
         // If the last instruction is a return statement, then add this return
@@ -186,13 +186,18 @@ impl<'a> UnitBuilder<'a> {
         }
     }
 
+    pub fn set_entry(&mut self) {
+        debug_assert!(self.unit.cfg.entry.is_dummy());
+        self.unit.cfg.entry = self.sequence.unwrap();
+    }
+
     /// Set conditional branch.
     pub fn sequence_value_jump(&mut self, value: isize, seq: SequenceIndex) {
         let SequenceIndex(index) = self.sequence.unwrap();
         let edit = &mut self.unit.cfg.sequences[index];
         edit.successors.push(seq);
         let succ_idx = SuccessorIndex(edit.successors.len() - 1);
-        assert!(!edit.targets.iter().any(|&(v, _)| v == value));
+        debug_assert!(!edit.targets.iter().any(|&(v, _)| v == value));
         edit.targets.push((value, succ_idx));
     }
     /// Set default branch.
@@ -201,7 +206,7 @@ impl<'a> UnitBuilder<'a> {
         let edit = &mut self.unit.cfg.sequences[index];
         edit.successors.push(seq);
         let succ_idx = SuccessorIndex(edit.successors.len() - 1);
-        assert_eq!(edit.default, None);
+        debug_assert_eq!(edit.default, None);
         edit.default = Some(succ_idx);
     }
     /// Set unwind branch.
@@ -210,7 +215,7 @@ impl<'a> UnitBuilder<'a> {
         let edit = &mut self.unit.cfg.sequences[index];
         edit.successors.push(seq);
         let succ_idx = SuccessorIndex(edit.successors.len() - 1);
-        assert_eq!(edit.unwind, None);
+        debug_assert_eq!(edit.unwind, None);
         edit.unwind = Some(succ_idx);
     }
 

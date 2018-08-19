@@ -229,6 +229,17 @@ pub enum Opcode {
     CallUnit(unit::UnitId),
 }
 
+pub enum ValueType {
+    Boolean,
+    Pointer,
+    Number(number::NumberType),
+    Complex(ComplexTypeId),
+    ResultOfUnit(unit::UnitId),
+    ResultOfSig(ComplexTypeId),
+    InheritFromOperands,
+    None,
+}
+
 impl Opcode {
     pub fn is_control(self) -> bool {
         match self {
@@ -247,6 +258,55 @@ impl Opcode {
         match self {
             Opcode::Return => true,
             _ => false,
+        }
+    }
+
+    pub fn result_type(self) -> ValueType {
+        use self::Opcode::*;
+        match self {
+            Entry(_) |
+            Newhash(_) => ValueType::None,
+            Rehash(_) |
+            Phi => ValueType::InheritFromOperands,
+            Const(val) => ValueType::Number(val.into()),
+            Cast(id) => ValueType::Complex(id),
+            OverflowFlag => ValueType::Boolean,
+            Add(n) |
+            Sub(n) |
+            Mul(n) |
+            Div(n) |
+            Rem(n) => ValueType::Number(n),
+            SignExt(n) => ValueType::Number(n.into()),
+            ZeroExt(n) => ValueType::Number(n.into()),
+            Truncate(f) |
+            Round(f) |
+            Floor(f) |
+            Ceil(f) => ValueType::Number(f.into()),
+            BwXor(b) |
+            BwAnd(b) |
+            BwOr(b) |
+            BwNot(b) => ValueType::Number(b.into()),
+            ShiftLeft(i) => ValueType::Number(i.into()),
+            ShiftRight(i) => ValueType::Number(i.into()),
+            Eq(_) | Lt(_) | Le(_) |
+            Ne(_) | Gt(_) | Ge(_) => ValueType::Boolean,
+            StaticAddress |
+            Address => ValueType::Pointer,
+            CPUAddress => ValueType::None,
+            Load(_) => ValueType::None,
+            Store(ty) => ValueType::Complex(ty),
+            LoadFenceLoad |
+            LoadFenceStore |
+            StoreFenceLoad |
+            StoreFenceStore => ValueType::None,
+            Unit(id) => ValueType::ResultOfUnit(id),
+            Return |
+            Unwind |
+            Unreachable |
+            Goto |
+            Switch(_) => ValueType::None,
+            Call(id) => ValueType::ResultOfSig(id),
+            CallUnit(id) => ValueType::ResultOfUnit(id),
         }
     }
 }
@@ -294,11 +354,17 @@ impl DataFlow {
 }
 
 impl Value {
+    // Create a Dummy value which should fail any validation test.
     pub fn dummy() -> Value {
         Value { hash: 0, index: usize::max_value() }
     }
+    // Check if this is the value created as a dummy.
     pub fn is_dummy(self) -> bool {
         self.index == usize::max_value()
+    }
+    pub fn index(self) -> usize {
+        debug_assert!(!self.is_dummy());
+        self.index
     }
 }
 
