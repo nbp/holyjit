@@ -180,9 +180,11 @@ fn convert_ins(idx: usize, ins: &Instruction, seq: &Sequence, ebbs: &Vec<Ebb>, b
         },
         Cast(_id) => unimplemented!(),
         OverflowFlag => (),
+        CarryFlag => (),
         Add(n) => {
-            // TODO: If any overflow flag depends on this instruction, we should
-            // change the encoding of this instruction to emit a carry bits.
+            // TODO: If any overflow/carry flag depends on this instruction, we
+            // should change the encoding of this instruction to emit a carry
+            // bits.
             let a0 = bld.use_var(Variable::new(ins.operands[0].index));
             let a1 = bld.use_var(Variable::new(ins.operands[1].index));
             let res = match n {

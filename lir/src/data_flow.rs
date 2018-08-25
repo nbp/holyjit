@@ -89,9 +89,12 @@ pub enum Opcode {
     /// (1 operand)
     Cast(ComplexTypeId),
 
-    /// Extract overflow flag from the operation which created the value.
-    /// (0 operand, 1 dependency)
+    /// Extract overflow flag from the operation on which this instruction
+    /// depends on. (0 operand, 1 dependency)
     OverflowFlag,
+    /// Extract carry flag from the operation on which this instruction depends
+    /// on. (0 operand, 1 dependency)
+    CarryFlag,
 
     /// Addition. (2 operands)
     Add(number::NumberType),
@@ -270,7 +273,8 @@ impl Opcode {
             Phi => ValueType::InheritFromOperands,
             Const(val) => ValueType::Number(val.into()),
             Cast(id) => ValueType::Complex(id),
-            OverflowFlag => ValueType::Boolean,
+            OverflowFlag |
+            CarryFlag => ValueType::Boolean,
             Add(n) |
             Sub(n) |
             Mul(n) |
