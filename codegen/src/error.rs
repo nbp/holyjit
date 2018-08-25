@@ -1,3 +1,4 @@
+use codegen::verifier::VerifierError;
 use codegen::CodegenError;
 use mmap::MapError;
 use region;
@@ -10,6 +11,7 @@ pub type LowerResult<T> = Result<T, LowerError>;
 #[derive(Debug)]
 pub enum LowerError {
     CodeGen(CodegenError),
+    Verifier(VerifierError),
     Map(MapError),
     Protect,
     UnitIsNotAFunction,
@@ -23,6 +25,13 @@ impl From<CodegenError> for LowerError {
     /// Implictly convert Cranelift codegen errors into LowerError.
     fn from(err: CodegenError) -> LowerError {
         LowerError::CodeGen(err)
+    }
+}
+
+impl From<VerifierError> for LowerError {
+    /// Implictly convert Cranelift codegen errors into LowerError.
+    fn from(err: VerifierError) -> LowerError {
+        LowerError::Verifier(err)
     }
 }
 
