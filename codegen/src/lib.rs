@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn add1_unit() {
+    fn add1_test() {
         let mut ctx_bld = ContextBuilder::new();
         let add1_unit = {
             let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
@@ -130,6 +130,72 @@ mod tests {
         let add1 : fn(i32) -> i32 = unsafe {
             mem::transmute(code.as_ptr())
         };
+        assert_eq!(add1(-5), -4);
         assert_eq!(add1(12), 13);
+    }
+
+    #[test]
+    fn round_odd_up_test() {
+        let mut ctx_bld = ContextBuilder::new();
+        let round_odd_up_unit = {
+            let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
+            // Add the function signature.
+            let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
+            let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32], vec![t_i32], CanUnwind(true)));
+            bld.set_signature(t_sig);
+            let s0 = bld.create_sequence(); // test x % 2 == 0
+            let s1 = bld.create_sequence(); // x += 1
+            let s2 = bld.create_sequence(); // return x
+
+            // [sequence 0]
+            bld.switch_to_sequence(s0);
+            bld.set_entry();
+            let a0 = bld.unit_arg(0);
+            let v0 = bld.add_op(Opcode::Const(NumberValue::I32(2)), &[]);
+            let v1 = bld.add_op(Opcode::Rem(SignedType::I32), &[a0, v0]);
+            bld.end_sequence(Instruction {
+                opcode: Opcode::Switch(SwitchData { low: 0,  high: 1 }),
+                operands: vec![v1],
+                dependencies: vec![],
+                replaced_by: None,
+            });
+            bld.sequence_value_jump(0, s2);
+            bld.sequence_value_jump(1, s1);
+
+            // [sequence 1]
+            bld.switch_to_sequence(s1);
+            let v2 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
+            let v3 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v2]);
+            bld.end_sequence(Instruction {
+                opcode: Opcode::Goto,
+                operands: vec![],
+                dependencies: vec![],
+                replaced_by: None,
+            });
+            bld.sequence_default_jump(s2);
+
+            // [sequence 2]
+            bld.switch_to_sequence(s2);
+            let v4 = bld.add_op(Opcode::Phi, &[a0, v3]);
+            bld.end_sequence(Instruction {
+                opcode: Opcode::Return,
+                operands: vec![v4],
+                dependencies: vec![],
+                replaced_by: None,
+            });
+
+            bld.finish()
+        };
+        let ctx = ctx_bld.finish();
+
+        let mut cg = CodeGenerator::new();
+        let code = cg.compile(&ctx, &round_odd_up_unit).unwrap();
+        let round_odd_up : fn(i32) -> i32 = unsafe {
+            mem::transmute(code.as_ptr())
+        };
+        assert_eq!(round_odd_up(0), 0);
+        assert_eq!(round_odd_up(9654), 9654);
+        assert_eq!(round_odd_up(1618033), 1618034);
+        assert_eq!(round_odd_up(-5), -4);
     }
 }

@@ -105,7 +105,7 @@ pub enum Opcode {
     /// Division. (2 operands: result = lhs / rhs)
     Div(number::NumberType),
     /// Remainder. (2 operands: result = lhs % rhs)
-    Rem(number::NumberType),
+    Rem(number::SignedType),
     /// Sign-extend. (1 operand)
     SignExt(number::SignedType),
     /// Zero-extend. (1 operand)
@@ -278,8 +278,8 @@ impl Opcode {
             Add(n) |
             Sub(n) |
             Mul(n) |
-            Div(n) |
-            Rem(n) => ValueType::Number(n),
+            Div(n) => ValueType::Number(n),
+            Rem(n) => ValueType::Number(n.into()),
             SignExt(n) => ValueType::Number(n.into()),
             ZeroExt(n) => ValueType::Number(n.into()),
             Truncate(f) |

@@ -194,29 +194,47 @@ impl<'a> UnitBuilder<'a> {
     /// Set conditional branch.
     pub fn sequence_value_jump(&mut self, value: isize, seq: SequenceIndex) {
         let SequenceIndex(index) = self.sequence.unwrap();
-        let edit = &mut self.unit.cfg.sequences[index];
-        edit.successors.push(seq);
-        let succ_idx = SuccessorIndex(edit.successors.len() - 1);
-        debug_assert!(!edit.targets.iter().any(|&(v, _)| v == value));
-        edit.targets.push((value, succ_idx));
+        let succ_idx = {
+            let edit = &mut self.unit.cfg.sequences[index];
+            edit.successors.push(seq);
+            let succ_idx = SuccessorIndex(edit.successors.len() - 1);
+            debug_assert!(!edit.targets.iter().any(|&(v, _)| v == value));
+            edit.targets.push((value, succ_idx));
+            succ_idx
+        };
+        let SequenceIndex(seq) = seq;
+        let edit = &mut self.unit.cfg.sequences[seq];
+        edit.predecessors.push((SequenceIndex(index), succ_idx));
     }
     /// Set default branch.
     pub fn sequence_default_jump(&mut self, seq: SequenceIndex) {
         let SequenceIndex(index) = self.sequence.unwrap();
-        let edit = &mut self.unit.cfg.sequences[index];
-        edit.successors.push(seq);
-        let succ_idx = SuccessorIndex(edit.successors.len() - 1);
-        debug_assert_eq!(edit.default, None);
-        edit.default = Some(succ_idx);
+        let succ_idx = {
+            let edit = &mut self.unit.cfg.sequences[index];
+            edit.successors.push(seq);
+            let succ_idx = SuccessorIndex(edit.successors.len() - 1);
+            debug_assert_eq!(edit.default, None);
+            edit.default = Some(succ_idx);
+            succ_idx
+        };
+        let SequenceIndex(seq) = seq;
+        let edit = &mut self.unit.cfg.sequences[seq];
+        edit.predecessors.push((SequenceIndex(index), succ_idx));
     }
     /// Set unwind branch.
     pub fn sequence_unwind_jump(&mut self, seq: SequenceIndex) {
         let SequenceIndex(index) = self.sequence.unwrap();
-        let edit = &mut self.unit.cfg.sequences[index];
-        edit.successors.push(seq);
-        let succ_idx = SuccessorIndex(edit.successors.len() - 1);
-        debug_assert_eq!(edit.unwind, None);
-        edit.unwind = Some(succ_idx);
+        let succ_idx = {
+            let edit = &mut self.unit.cfg.sequences[index];
+            edit.successors.push(seq);
+            let succ_idx = SuccessorIndex(edit.successors.len() - 1);
+            debug_assert_eq!(edit.unwind, None);
+            edit.unwind = Some(succ_idx);
+            succ_idx
+        };
+        let SequenceIndex(seq) = seq;
+        let edit = &mut self.unit.cfg.sequences[seq];
+        edit.predecessors.push((SequenceIndex(index), succ_idx));
     }
 
     /// Finalize and (TODO) assert that the generate Unit is valid.

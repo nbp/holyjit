@@ -4,7 +4,8 @@ use frontend::{FunctionBuilderContext, FunctionBuilder, Variable};
 
 use codegen::entity::EntityRef;
 use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode};
-use codegen::ir::immediates::{Ieee32, Ieee64};
+use codegen::ir::immediates::{Ieee32, Ieee64, Imm64};
+use codegen::ir::condcodes::IntCC;
 use codegen::ir::types::*;
 use codegen::ir::types;
 use codegen::settings::{self, CallConv};
@@ -14,16 +15,16 @@ use codegen::isa::TargetIsa;
 use lir::unit::{Unit, UnitId};
 use lir::context::Context;
 use lir::types::{ComplexTypeId, ComplexType};
-use lir::number::{NumberType, NumberValue};
+use lir::number::{NumberType, SignedType, NumberValue};
 use lir::control_flow::{Sequence, SequenceIndex, SuccessorIndex};
 use lir::data_flow::{Opcode, Instruction, ValueType};
 use error::{LowerResult, LowerError};
 
-#[derive(Copy, Clone)]
 struct ConvertCtx<'a> {
     pub isa: &'a TargetIsa,
     pub ctx: &'a Context,
     pub unit: &'a Unit,
+    pub var_types: Vec<OptVarType>,
 }
 
 type OptVarType = Option<(Variable, types::Type)>;
@@ -97,7 +98,7 @@ impl<'a> ConvertCtx<'a> {
 
     /// Identify the type of each instructions and declare a variable with the same
     /// offset as the instruction in the data flow graph of the Unit.
-    fn declare_vars(&self, bld: &mut FunctionBuilder<Variable>) -> LowerResult<Vec<OptVarType>> {
+    fn declare_vars(&mut self, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
         // Use pointer as a dummy type.
         let mut types : Vec<_> = self.unit.dfg.instructions.iter().map(|_| None).collect();
 
@@ -151,10 +152,35 @@ impl<'a> ConvertCtx<'a> {
             types[index] = Some((v, ty));
         }
 
-        Ok(types)
+        self.var_types = types;
+        Ok(())
     }
 
-    fn instruction(&self, idx: usize, ins: &Instruction, seq: &Sequence, ebbs: &Vec<Ebb>, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
+    /// We are about to jump to the next block, convert the Phi operands into
+    /// variable definitions, such that the FunctionBuilder can convert these
+    /// into arguments of extended basic blocks.
+    fn bind_phis(&self, idx: SequenceIndex, seq: &Sequence, succ: SuccessorIndex, bld: &mut FunctionBuilder<Variable>) {
+        let SuccessorIndex(sidx) = succ;
+        let SequenceIndex(sseq) = seq.successors[sidx];
+        let sseq = &self.unit.cfg.sequences[sseq];
+        // Find the index of this successor in the list of predecessors.
+        let (pidx, _) = sseq.predecessors.iter().enumerate().find(|p| p.1 == &(idx, succ)).unwrap();
+
+        // For each Phi, bind the variable corresponding to the Phi, with the
+        // variable of the current sequence.
+        for value in sseq.sequence.iter() {
+            let ins = &self.unit.dfg.instructions[value.index];
+            match ins.opcode {
+                Opcode::Phi => (),
+                _ => continue,
+            };
+            let input = bld.use_var(Variable::new(ins.operands[pidx].index));
+            let res = bld.ins().copy(input);
+            bld.def_var(Variable::new(value.index), res);
+        }
+    }
+
+    fn instruction(&mut self, idx: usize, ins: &Instruction, sidx: SequenceIndex, seq: &Sequence, ebbs: &Vec<Ebb>, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
         use self::Opcode::*;
         match ins.opcode {
             Entry(_) => (),
@@ -196,10 +222,22 @@ impl<'a> ConvertCtx<'a> {
                 };
                 bld.def_var(Variable::new(idx), res);
             }
-            Sub(_n) |
-            Mul(_n) |
-            Div(_n) |
-            Rem(_n) => unimplemented!(),
+            Sub(_n) => unimplemented!(),
+            Mul(_n) => unimplemented!(),
+            Div(_n) => unimplemented!(),
+            Rem(n) => {
+                let a0 = bld.use_var(Variable::new(ins.operands[0].index));
+                let a1 = bld.use_var(Variable::new(ins.operands[1].index));
+                let res = match n {
+                    SignedType::I8 | SignedType::I16 |
+                    SignedType::I32 | SignedType::I64
+                        => bld.ins().srem(a0, a1),
+                    SignedType::U8 | SignedType::U16 |
+                    SignedType::U32 | SignedType::U64
+                        => bld.ins().urem(a0, a1),
+                };
+                bld.def_var(Variable::new(idx), res);
+            },
             SignExt(_n) => unimplemented!(),
             ZeroExt(_n) => unimplemented!(),
             Truncate(_f) |
@@ -234,10 +272,66 @@ impl<'a> ConvertCtx<'a> {
             }
             Goto => {
                 let SuccessorIndex(idx) = seq.default.unwrap();
+                self.bind_phis(sidx, seq, SuccessorIndex(idx), bld);
                 let SequenceIndex(idx) = seq.successors[idx];
                 bld.ins().jump(ebbs[idx], &[]);
             }
-            Switch(_) => unimplemented!(),
+            Switch(_) => {
+                // TODO: use data field and the number of successors to
+                // determine if we should generate a jump table.
+                let a0 = bld.use_var(Variable::new(ins.operands[0].index));
+                assert!(seq.unwind == None, "Switch statements are cannot unwind");
+                let nb_succ = seq.targets.len() + seq.default.map_or(0, |_| 1);
+                assert!(nb_succ > 0, "Switch statement should at least have a successor,");
+                match nb_succ {
+                    0 => unreachable!(),
+                    1 => {
+                        // Unconditional jump to the only branch.
+                        let SuccessorIndex(idx) = seq.default.unwrap_or_else(|| seq.targets[0].1);
+                        self.bind_phis(sidx, seq, SuccessorIndex(idx), bld);
+                        let SequenceIndex(idx) = seq.successors[idx];
+                        bld.ins().jump(ebbs[idx], &[]);
+                    }
+                    2 => {
+                        let (tv, t, f) = match seq.default {
+                            Some(f) => (seq.targets[0].0, seq.targets[0].1, f),
+                            None => {
+                                let (tv, t) = seq.targets[0];
+                                let (fv, f) = seq.targets[1];
+                                assert_ne!(tv, fv);
+                                if (0 <= tv && tv < fv) || (fv < tv && tv <= 0) {
+                                    (tv, t, f)
+                                } else {
+                                    (fv, f, t)
+                                }
+                            }
+                        };
+
+                        // Conditional jump to the first branch.
+                        let SuccessorIndex(t) = t;
+                        self.bind_phis(sidx, seq, SuccessorIndex(t), bld);
+                        let SequenceIndex(t) = seq.successors[t];
+                        if tv == 0 {
+                            bld.ins().brz(a0, ebbs[t], &[]);
+                        } else {
+                            let t0 = Variable::new(self.var_types.len());
+                            self.var_types.push(Some((t0, types::B1)));
+                            bld.declare_var(t0, types::B1);
+                            let cmp_res = bld.ins().icmp_imm(IntCC::Equal, a0, Imm64::new(tv as i64));
+                            bld.def_var(t0, cmp_res);
+                            let t0 = bld.use_var(t0);
+                            bld.ins().brnz(t0, ebbs[t], &[]);
+                        }
+
+                        // Unconditional jump to the second branch.
+                        let SuccessorIndex(f) = f;
+                        self.bind_phis(sidx, seq, SuccessorIndex(f), bld);
+                        let SequenceIndex(f) = seq.successors[f];
+                        bld.ins().jump(ebbs[f], &[]);
+                    }
+                    _ => unimplemented!("Switch with more than 2 branches"),
+                }
+            }
             Call(_id) => unimplemented!(),
             CallUnit(_id) => unimplemented!(),
         };
@@ -247,7 +341,7 @@ impl<'a> ConvertCtx<'a> {
 
     /// Convert the sequences of the control flow graph into a graph of extended
     /// blocks expected by Cranelift.
-    fn cfg(&self, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
+    fn cfg(&mut self, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
         let _types = self.declare_vars(bld)?;
 
         // TODO: Create better extended basic blocks instead of creating a 1:1
@@ -295,15 +389,12 @@ impl<'a> ConvertCtx<'a> {
             // Convert instructions. NOTE: Assumes that all the instructions are
             // scheduled properly in the control flow graph.
             for value in seq.sequence.iter() {
-                self.instruction(value.index, &self.unit.dfg.instructions[value.index], seq, &ebbs, bld)?;
+                self.instruction(value.index, &self.unit.dfg.instructions[value.index], SequenceIndex(i), seq, &ebbs, bld)?;
             }
-
-            // Set variables corresponding to the Phi of the following blocks.
-            // TODO!
 
             // Add conditional and jump instruction.
             let value = seq.control;
-            self.instruction(value.index, &self.unit.dfg.instructions[value.index], seq, &ebbs, bld)?;
+            self.instruction(value.index, &self.unit.dfg.instructions[value.index], SequenceIndex(i), seq, &ebbs, bld)?;
 
             // Seal blocks which were waiting on the current block to be ended.
             let rest = mem::replace(&mut seal_queue, vec![]);
@@ -319,7 +410,7 @@ impl<'a> ConvertCtx<'a> {
     }
 
     /// Convert a LIR Unit into a Cranelift IR (Function).
-    fn convert(&self) -> LowerResult<Function> {
+    fn convert(&mut self) -> LowerResult<Function> {
         let sig = self.signature()?;
         let mut fn_builder_ctx = FunctionBuilderContext::<Variable>::new();
         let mut func = Function::with_name_signature(self.external_name(self.unit.id), sig);
@@ -337,7 +428,7 @@ impl<'a> ConvertCtx<'a> {
 
 /// Convert a LIR Unit into a Cranelift IR (Function).
 pub fn convert(isa: &TargetIsa, ctx: &Context, unit: &Unit) -> LowerResult<Function> {
-    let cc = ConvertCtx { ctx, isa, unit };
+    let mut cc = ConvertCtx { ctx, isa, unit, var_types: vec![] };
     println!("{:?}", unit);
     let func = cc.convert()?;
     println!("{}", func.display(None));
