@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 /// method.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum NumberType {
+    B1,
     U8, U16, U32, U64,
     I8, I16, I32, I64,
     F32, F64,
@@ -27,6 +28,7 @@ pub enum FloatType {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)] /* derive(Hash)-manually */
 pub enum NumberValue {
+    B1(bool),
     U8(u8), U16(u16), U32(u32), U64(u64),
     I8(i8), I16(i16), I32(i32), I64(i64),
     F32(f32), F64(f64),
@@ -71,6 +73,7 @@ macro_rules! from_with_same_prefix_remove_parent {
 }
 
 from_with_same_prefix_remove_parent!(impl From<NumberValue> for NumberType =>
+    B1,
     U8, U16, U32, U64,
     I8, I16, I32, I64,
     F32, F64,
@@ -82,6 +85,7 @@ impl Hash for NumberValue {
         use std::mem;
         mem::discriminant(self).hash(state);
         match self {
+            &NumberValue::B1(v) => v.hash(state),
             &NumberValue::U8(v) => v.hash(state),
             &NumberValue::U16(v) => v.hash(state),
             &NumberValue::U32(v) => v.hash(state),

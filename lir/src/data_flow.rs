@@ -25,7 +25,7 @@ pub struct DataFlow {
 /// terminator. As opposed to ordinary SSA notation, we use a hash instead of an
 /// instruction index, in order to be able to generate position-independent
 /// patches for each Unit.
-#[derive(Serialize, Deserialize, Debug, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub struct Value {
     pub hash: u64,
     pub index: usize,

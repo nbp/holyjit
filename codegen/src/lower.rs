@@ -1,4 +1,5 @@
 use std::mem;
+use std::collections::HashMap;
 
 use frontend::{FunctionBuilderContext, FunctionBuilder, Variable};
 
@@ -17,21 +18,41 @@ use lir::context::Context;
 use lir::types::{ComplexTypeId, ComplexType};
 use lir::number::{NumberType, SignedType, NumberValue};
 use lir::control_flow::{Sequence, SequenceIndex, SuccessorIndex};
-use lir::data_flow::{Opcode, Instruction, ValueType};
+use lir::data_flow::{Opcode, Instruction, ValueType, Value};
 use error::{LowerResult, LowerError};
 
 struct ConvertCtx<'a> {
+    /// Used to know the size of a pointer.
     pub isa: &'a TargetIsa,
+    /// Context used to resove the LIR types information.
     pub ctx: &'a Context,
+    /// Unit of the function which is being compiled.
     pub unit: &'a Unit,
+    /// Map each variable known with the type declared to cranelift. This is
+    /// also used to allocate new temporary variables.
     pub var_types: Vec<OptVarType>,
+    /// Map the math operation to the overflow variable.
+    pub overflow_map: HashMap<Value, Variable>,
+    /// Map the math operation to the carry variable.
+    pub carry_map: HashMap<Value, Variable>,
 }
 
 type OptVarType = Option<(Variable, types::Type)>;
 
 impl<'a> ConvertCtx<'a> {
+    fn sign_mask(&self, ty: NumberType) -> u64 {
+        match ty {
+            NumberType::F64 | NumberType::I64 | NumberType::U64 => 0x8000_0000_0000_0000,
+            NumberType::F32 | NumberType::I32 | NumberType::U32 => 0x8000_0000,
+            NumberType::I16 | NumberType::U16 => 0x8000,
+            NumberType::I8 | NumberType::U8 => 0x80,
+            NumberType::B1 => 1,
+        }
+    }
+
     fn number_type(&self, ty: NumberType) -> types::Type {
         match ty {
+            NumberType::B1 => types::B1,
             NumberType::I8 | NumberType::U8 => types::I8,
             NumberType::I16 | NumberType::U16 => types::I16,
             NumberType::I32 | NumberType::U32 => types::I32,
@@ -47,6 +68,7 @@ impl<'a> ConvertCtx<'a> {
         let ty = self.ctx.get_type(ty);
         match ty {
             &Pointer => Ok(self.isa.pointer_type()),
+            &Scalar(B1) => Ok(types::B1),
             &Scalar(U8) | &Scalar(I8) => Ok(types::I8),
             &Scalar(U16) | &Scalar(I16) => Ok(types::I16),
             &Scalar(U32) | &Scalar(I32) => Ok(types::I32),
@@ -134,6 +156,18 @@ impl<'a> ConvertCtx<'a> {
             let v = Variable::new(index);
             bld.declare_var(v, ty);
             types[index] = Some((v, ty));
+
+            // Record Overflow and Carry dependency and map it to overflow /
+            // carry variable. Note, that we expect to have only a single
+            // overflow and carry per math operation. TODO: To handle multiple
+            // overflow flag and carry flag, should create new variable that
+            // would be copied on overflow/carry encoding.
+            let ins_res = match ins.opcode {
+                Opcode::OverflowFlag => self.overflow_map.insert(ins.dependencies[0], v),
+                Opcode::CarryFlag => self.carry_map.insert(ins.dependencies[0], v),
+                _ => None,
+            };
+            debug_assert!(ins_res == None);
         }
 
         // Infer type from the operands.
@@ -180,20 +214,22 @@ impl<'a> ConvertCtx<'a> {
         }
     }
 
-    fn instruction(&mut self, idx: usize, ins: &Instruction, sidx: SequenceIndex, seq: &Sequence, ebbs: &Vec<Ebb>, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
+    fn instruction(&mut self, val: Value, ins: &Instruction, sidx: SequenceIndex, seq: &Sequence, ebbs: &Vec<Ebb>, bld: &mut FunctionBuilder<Variable>) -> LowerResult<()> {
         use self::Opcode::*;
+        let res_var = Variable::new(val.index);
         match ins.opcode {
             Entry(_) => (),
             Newhash(_) => (),
             Rehash(_) => {
                 let a0 = bld.use_var(Variable::new(ins.operands[0].index));
                 let res = bld.ins().copy(a0);
-                bld.def_var(Variable::new(idx), res);
+                bld.def_var(Variable::new(val.index), res);
             }
             Phi => (), // Phi are handled at the end of predecessor blocks.
             Const(val) => {
                 use self::NumberValue::*;
                 let res = match val {
+                    B1(i) => bld.ins().bconst(types::B1, i),
                     I8(i) => bld.ins().iconst(types::I8, i as i64),
                     I16(i) => bld.ins().iconst(types::I16, i as i64),
                     I32(i) => bld.ins().iconst(types::I32, i as i64),
@@ -205,7 +241,7 @@ impl<'a> ConvertCtx<'a> {
                     F32(f) => bld.ins().f32const(Ieee32::with_float(f)),
                     F64(f) => bld.ins().f64const(Ieee64::with_float(f)),
                 };
-                bld.def_var(Variable::new(idx), res);
+                bld.def_var(res_var, res);
             },
             Cast(_id) => unimplemented!(),
             OverflowFlag => (),
@@ -216,11 +252,47 @@ impl<'a> ConvertCtx<'a> {
                 // bits.
                 let a0 = bld.use_var(Variable::new(ins.operands[0].index));
                 let a1 = bld.use_var(Variable::new(ins.operands[1].index));
-                let res = match n {
-                    NumberType::F32 | NumberType::F64 => bld.ins().fadd(a0, a1),
-                    _ => bld.ins().iadd(a0, a1),
+                let (of, cf) = (self.overflow_map.get(&val),
+                                self.carry_map.get(&val));
+                match (n, of, cf) {
+                    (NumberType::F32, _, _) |
+                    (NumberType::F64, _, _) => {
+                        debug_assert!(of == None);
+                        debug_assert!(cf == None);
+                        let res = bld.ins().fadd(a0, a1);
+                        bld.def_var(res_var, res);
+                    }
+                    (_, None, None) => {
+                        let res = bld.ins().iadd(a0, a1);
+                        bld.def_var(res_var, res);
+                    }
+                    (_, None, Some(cv)) => {
+                        let (res, carry) = bld.ins().iadd_cout(a0, a1);
+                        bld.def_var(res_var, res);
+                        bld.def_var(*cv, carry);
+                    }
+                    (i, Some(ov), None) => {
+                        let res = bld.ins().iadd(a0, a1);
+                        bld.def_var(res_var, res);
+                        // of = ((a0 | a1) ^ (a0 + a1)) > (max >> 1)
+                        let bor = bld.ins().bor(a0, a1);
+                        let xor = bld.ins().bxor(bor, res);
+                        let sign_mask = self.sign_mask(i);
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        bld.def_var(*ov, cmp);
+                    }
+                    (i, Some(ov), Some(cv)) => {
+                        let (res, carry) = bld.ins().iadd_cout(a0, a1);
+                        bld.def_var(res_var, res);
+                        bld.def_var(*cv, carry);
+                        // of = ((a0 | a1) ^ (a0 + a1)) > (max >> 1)
+                        let bor = bld.ins().bor(a0, a1);
+                        let xor = bld.ins().bxor(bor, res);
+                        let sign_mask = self.sign_mask(i);
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        bld.def_var(*ov, cmp);
+                    }
                 };
-                bld.def_var(Variable::new(idx), res);
             }
             Sub(_n) => unimplemented!(),
             Mul(_n) => unimplemented!(),
@@ -236,7 +308,7 @@ impl<'a> ConvertCtx<'a> {
                     SignedType::U32 | SignedType::U64
                         => bld.ins().urem(a0, a1),
                 };
-                bld.def_var(Variable::new(idx), res);
+                bld.def_var(res_var, res);
             },
             SignExt(_n) => unimplemented!(),
             ZeroExt(_n) => unimplemented!(),
@@ -314,13 +386,13 @@ impl<'a> ConvertCtx<'a> {
                         if tv == 0 {
                             bld.ins().brz(a0, ebbs[t], &[]);
                         } else {
-                            let t0 = Variable::new(self.var_types.len());
-                            self.var_types.push(Some((t0, types::B1)));
-                            bld.declare_var(t0, types::B1);
+                            // let t0 = Variable::new(self.var_types.len());
+                            // self.var_types.push(Some((t0, types::B1)));
+                            // bld.declare_var(t0, types::B1);
                             let cmp_res = bld.ins().icmp_imm(IntCC::Equal, a0, Imm64::new(tv as i64));
-                            bld.def_var(t0, cmp_res);
-                            let t0 = bld.use_var(t0);
-                            bld.ins().brnz(t0, ebbs[t], &[]);
+                            // bld.def_var(t0, cmp_res);
+                            // let t0 = bld.use_var(t0);
+                            bld.ins().brnz(cmp_res, ebbs[t], &[]);
                         }
 
                         // Unconditional jump to the second branch.
@@ -389,12 +461,12 @@ impl<'a> ConvertCtx<'a> {
             // Convert instructions. NOTE: Assumes that all the instructions are
             // scheduled properly in the control flow graph.
             for value in seq.sequence.iter() {
-                self.instruction(value.index, &self.unit.dfg.instructions[value.index], SequenceIndex(i), seq, &ebbs, bld)?;
+                self.instruction(*value, &self.unit.dfg.instructions[value.index], SequenceIndex(i), seq, &ebbs, bld)?;
             }
 
             // Add conditional and jump instruction.
             let value = seq.control;
-            self.instruction(value.index, &self.unit.dfg.instructions[value.index], SequenceIndex(i), seq, &ebbs, bld)?;
+            self.instruction(value, &self.unit.dfg.instructions[value.index], SequenceIndex(i), seq, &ebbs, bld)?;
 
             // Seal blocks which were waiting on the current block to be ended.
             let rest = mem::replace(&mut seal_queue, vec![]);
@@ -428,7 +500,12 @@ impl<'a> ConvertCtx<'a> {
 
 /// Convert a LIR Unit into a Cranelift IR (Function).
 pub fn convert(isa: &TargetIsa, ctx: &Context, unit: &Unit) -> LowerResult<Function> {
-    let mut cc = ConvertCtx { ctx, isa, unit, var_types: vec![] };
+    let mut cc = ConvertCtx {
+        ctx, isa, unit,
+        var_types: vec![],
+        overflow_map: HashMap::new(),
+        carry_map: HashMap::new(),
+    };
     println!("{:?}", unit);
     let func = cc.convert()?;
     println!("{}", func.display(None));
