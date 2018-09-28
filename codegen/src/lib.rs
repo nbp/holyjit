@@ -114,7 +114,7 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let v0 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v0]);
-                bld.end_ins(Opcode::Return, &[v1]);
+                bld.end_op(Opcode::Return, &[v1]);
             }
             bld.finish()
         };
