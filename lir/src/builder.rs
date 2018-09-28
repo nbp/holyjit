@@ -157,19 +157,24 @@ impl<'a> UnitBuilder<'a> {
         value
     }
 
-    /// Add an instruction based only on its opcode, this function creates a
-    /// conservative aliasing between load, store, calls and units.
-    pub fn add_op(&mut self, opcode: Opcode, operands: &[Value]) -> Value {
+    /// Add an instruction based on its opcode, operands and dependencies.
+    pub fn add_op_deps(&mut self, opcode: Opcode, operands: &[Value], dependencies: &[Value]) -> Value {
         self.add_ins(Instruction {
             opcode,
             operands: operands.iter().map(|x| *x).collect(),
-            dependencies: vec![],
+            dependencies: dependencies.iter().map(|x| *x).collect(),
             replaced_by: None,
         })
     }
 
+    /// Add an instruction based only on its opcode, this function creates a
+    /// conservative aliasing between load, store, calls and units.
+    pub fn add_op(&mut self, opcode: Opcode, operands: &[Value]) -> Value {
+        self.add_op_deps(opcode, operands, &[])
+    }
+
     /// Add a control flow instruction to end the current sequence.
-    pub fn end_sequence(&mut self, ins: Instruction) {
+    pub fn end_ins(&mut self, ins: Instruction) {
         debug_assert!(ins.is_control());
         let is_return = ins.opcode.is_return();
         let value = self.dfg_add_ins(ins);
@@ -184,6 +189,22 @@ impl<'a> UnitBuilder<'a> {
         if is_return {
             self.unit.outputs.push(value);
         }
+    }
+
+    // Add a control flow instruction based on its opcode, operands and dependencies.
+    pub fn end_op_deps(&mut self, opcode: Opcode, operands: &[Value], dependencies: &[Value]) {
+        self.end_ins(Instruction {
+            opcode,
+            operands: operands.iter().map(|x| *x).collect(),
+            dependencies: dependencies.iter().map(|x| *x).collect(),
+            replaced_by: None,
+        })
+    }
+
+    /// Add a control flow instruction based only on its opcode, this function
+    /// creates a conservative aliasing between load, store, calls and units.
+    pub fn end_op(&mut self, opcode: Opcode, operands: &[Value]) {
+        self.end_op_deps(opcode, operands, &[])
     }
 
     pub fn set_entry(&mut self) {

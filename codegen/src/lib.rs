@@ -114,12 +114,7 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let v0 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v0]);
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v1],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                bld.end_ins(Opcode::Return, &[v1]);
             }
             bld.finish()
         };
@@ -153,12 +148,7 @@ mod tests {
             let a0 = bld.unit_arg(0);
             let v0 = bld.add_op(Opcode::Const(NumberValue::I32(2)), &[]);
             let v1 = bld.add_op(Opcode::Rem(SignedType::I32), &[a0, v0]);
-            bld.end_sequence(Instruction {
-                opcode: Opcode::Switch(SwitchData { low: 0,  high: 1 }),
-                operands: vec![v1],
-                dependencies: vec![],
-                replaced_by: None,
-            });
+            bld.end_op(Opcode::Switch(SwitchData { low: 0,  high: 1 }), &[v1]);
             bld.sequence_value_jump(0, s2);
             bld.sequence_value_jump(1, s1);
 
@@ -166,23 +156,13 @@ mod tests {
             bld.switch_to_sequence(s1);
             let v2 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
             let v3 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v2]);
-            bld.end_sequence(Instruction {
-                opcode: Opcode::Goto,
-                operands: vec![],
-                dependencies: vec![],
-                replaced_by: None,
-            });
+            bld.end_op(Opcode::Goto, &[]);
             bld.sequence_default_jump(s2);
 
             // [sequence 2]
             bld.switch_to_sequence(s2);
             let v4 = bld.add_op(Opcode::Phi, &[a0, v3]);
-            bld.end_sequence(Instruction {
-                opcode: Opcode::Return,
-                operands: vec![v4],
-                dependencies: vec![],
-                replaced_by: None,
-            });
+            bld.end_op(Opcode::Return, &[v4]);
 
             bld.finish()
         };
@@ -216,18 +196,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::OverflowFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -262,18 +232,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::U32), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::OverflowFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -307,18 +267,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I64), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::OverflowFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -353,18 +303,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::U64), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::OverflowFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -398,18 +338,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::CarryFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -444,18 +374,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::U32), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::CarryFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -489,18 +409,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::I64), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::CarryFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
@@ -535,18 +445,8 @@ mod tests {
                 let a0 = bld.unit_arg(0);
                 let a1 = bld.unit_arg(1);
                 let v1 = bld.add_op(Opcode::Add(NumberType::U64), &[a0, a1]);
-                let v2 = bld.add_ins(Instruction {
-                    opcode: Opcode::CarryFlag,
-                    operands: vec![],
-                    dependencies: vec![v1],
-                    replaced_by: None,
-                });
-                bld.end_sequence(Instruction {
-                    opcode: Opcode::Return,
-                    operands: vec![v2],
-                    dependencies: vec![],
-                    replaced_by: None,
-                })
+                let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
+                bld.end_op(Opcode::Return, &[v2])
             }
             bld.finish()
         };
