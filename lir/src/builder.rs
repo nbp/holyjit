@@ -1,7 +1,7 @@
 /// This module contains everything need for constructing a Unit, with its data
 /// flow graph and its control flow graph.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use unit::{Unit, UnitId};
 use data_flow::{Instruction, Opcode, Value};
@@ -29,6 +29,9 @@ pub struct UnitBuilder<'a> {
     ctx: &'a mut ContextBuilder,
     /// Sequence which is currently being editted.
     sequence: Option<SequenceIndex>,
+    /// List of sequences which are frozen, which implies that no predecessors
+    /// should be added to them.
+    frozen_seqs: HashSet<SequenceIndex>,
 }
 
 impl ContextBuilder {
@@ -86,6 +89,7 @@ impl<'a> UnitBuilder<'a> {
             unit: Unit::new(id),
             ctx,
             sequence: None,
+            frozen_seqs: HashSet::new(),
         }
     }
 
@@ -209,11 +213,14 @@ impl<'a> UnitBuilder<'a> {
 
     pub fn set_entry(&mut self) {
         debug_assert!(self.unit.cfg.entry.is_dummy());
-        self.unit.cfg.entry = self.sequence.unwrap();
+        let seq = self.sequence.unwrap();
+        self.unit.cfg.entry = seq;
+        self.freeze_sequence_predecessors(seq);
     }
 
     /// Set conditional branch.
     pub fn sequence_value_jump(&mut self, value: isize, seq: SequenceIndex) {
+        debug_assert!(!self.frozen_seqs.contains(&seq));
         let SequenceIndex(index) = self.sequence.unwrap();
         let succ_idx = {
             let edit = &mut self.unit.cfg.sequences[index];
@@ -229,6 +236,7 @@ impl<'a> UnitBuilder<'a> {
     }
     /// Set default branch.
     pub fn sequence_default_jump(&mut self, seq: SequenceIndex) {
+        debug_assert!(!self.frozen_seqs.contains(&seq));
         let SequenceIndex(index) = self.sequence.unwrap();
         let succ_idx = {
             let edit = &mut self.unit.cfg.sequences[index];
@@ -244,6 +252,7 @@ impl<'a> UnitBuilder<'a> {
     }
     /// Set unwind branch.
     pub fn sequence_unwind_jump(&mut self, seq: SequenceIndex) {
+        debug_assert!(!self.frozen_seqs.contains(&seq));
         let SequenceIndex(index) = self.sequence.unwrap();
         let succ_idx = {
             let edit = &mut self.unit.cfg.sequences[index];
@@ -257,8 +266,14 @@ impl<'a> UnitBuilder<'a> {
         let edit = &mut self.unit.cfg.sequences[seq];
         edit.predecessors.push((SequenceIndex(index), succ_idx));
     }
+    /// Prevent the addition of any predecessors to the given sequence. This is
+    /// used for computing the automatic insertion of Phi instructions.
+    pub fn freeze_sequence_predecessors(&mut self, seq: SequenceIndex) {
+        self.frozen_seqs.insert(seq);
+    }
 
-    /// Finalize and (TODO) assert that the generate Unit is valid.
+
+    /// Finalize and (TODO) assert that the generated Unit is valid.
     pub fn finish(self) -> Unit {
         self.unit
     }

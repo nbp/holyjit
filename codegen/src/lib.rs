@@ -154,6 +154,7 @@ mod tests {
 
             // [sequence 1]
             bld.switch_to_sequence(s1);
+            bld.freeze_sequence_predecessors(s1);
             let v2 = bld.add_op(Opcode::Const(NumberValue::I32(1)), &[]);
             let v3 = bld.add_op(Opcode::Add(NumberType::I32), &[a0, v2]);
             bld.end_op(Opcode::Goto, &[]);
@@ -161,6 +162,7 @@ mod tests {
 
             // [sequence 2]
             bld.switch_to_sequence(s2);
+            bld.freeze_sequence_predecessors(s2);
             let v4 = bld.add_op(Opcode::Phi, &[a0, v3]);
             bld.end_op(Opcode::Return, &[v4]);
 
