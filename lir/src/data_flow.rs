@@ -264,6 +264,20 @@ impl Opcode {
         }
     }
 
+    pub fn is_phi(self) -> bool {
+        match self {
+            Opcode::Phi => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_rehash(self) -> bool {
+        match self {
+            Opcode::Rehash(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn result_type(self) -> ValueType {
         use self::Opcode::*;
         match self {
@@ -317,12 +331,21 @@ impl Opcode {
 
 impl Instruction {
     pub fn is_control(&self) -> bool { self.opcode.is_control() }
+    pub fn is_phi(&self) -> bool { self.opcode.is_phi() }
+    pub fn is_rehash(&self) -> bool { self.opcode.is_rehash() }
 }
 
 impl Hash for Instruction {
     fn hash<H : Hasher>(&self, state: &mut H) {
         self.opcode.hash(state);
-        self.operands.hash(state);
+        if !self.is_rehash() {
+            // Rehash ignores the hash of its operands in order to properly
+            // handle loops without having circulat computation of hashes. Note,
+            // we could use the replace_by field to implement Rehash based on
+            // Newhash, but we might want to have the ability to remove all
+            // replace_by fields when needed.
+            self.operands.hash(state);
+        }
         self.dependencies.hash(state);
         // Exclude self.replaced_by.
     }
@@ -400,6 +423,38 @@ mod tests {
         // Rehash opcode compute a different hash value based on the number
         // which is given as argument. This is used to handle loops.
         assert_ne!(v1.hash, v2.hash);
+    }
+
+    #[test]
+    fn rehash_ignore_operands() {
+        let mut df = DataFlow::new();
+        let v0 = df.add_ins(Instruction {
+            opcode: Opcode::Const(number::NumberValue::U32(1024)),
+            operands: vec![],
+            dependencies: vec![],
+            replaced_by: None,
+        });
+        let v1 = df.add_ins(Instruction {
+            opcode: Opcode::Const(number::NumberValue::U32(512)),
+            operands: vec![],
+            dependencies: vec![],
+            replaced_by: None,
+        });
+        let v2 = df.add_ins(Instruction {
+            opcode: Opcode::Rehash(51),
+            operands: vec![v0],
+            dependencies: vec![],
+            replaced_by: None,
+        });
+        let v3 = df.add_ins(Instruction {
+            opcode: Opcode::Rehash(51),
+            operands: vec![v1],
+            dependencies: vec![],
+            replaced_by: None,
+        });
+        // Rehash opcode compute a hash which is independent of the operand.
+        // This is used to avoid loops in hashes computations.
+        assert_eq!(v2.hash, v3.hash);
     }
 
     #[test]

@@ -170,20 +170,43 @@ impl<'a> ConvertCtx<'a> {
             debug_assert!(ins_res == None);
         }
 
-        // Infer type from the operands.
-        for (index, ref ins) in self.unit.dfg.instructions.iter().enumerate() {
-            match ins.opcode.result_type() {
-                ValueType::InheritFromOperands => (),
-                _ => continue,
-            };
-            assert!(ins.operands.len() >= 1);
-            let ty = match types[ins.operands[0].index] {
-                Some((_, ty)) => ty,
-                None => continue,
-            };
-            let v = Variable::new(index);
-            bld.declare_var(v, ty);
-            types[index] = Some((v, ty));
+        // Infer type from the operands. Ideally instructions should be sorted
+        // within the sequences, but to satisfy cases where it is not we keep
+        // looping as long as we are able to find the type of more isntructions.
+        let mut last_nb = usize::max_value();
+        let mut nb_unknown_types = usize::max_value();
+        while nb_unknown_types != 0 {
+            nb_unknown_types = 0;
+            for (index, ref ins) in self.unit.dfg.instructions.iter().enumerate() {
+                // Only loop over instructios which are inferred from their
+                // operands.
+                match ins.opcode.result_type() {
+                    ValueType::InheritFromOperands => (),
+                    _ => continue,
+                };
+                // In case of a fix-point just skip already types instructions.
+                match types[index] {
+                    Some(_) => continue,
+                    None => (),
+                };
+                // Pick the first operand type and assign it to the current
+                // instruction.
+                assert!(ins.operands.len() >= 1);
+                let ty = match types[ins.operands[0].index] {
+                    Some((_, ty)) => ty,
+                    None => {
+                        nb_unknown_types += 1;
+                        continue
+                    },
+                };
+                let v = Variable::new(index);
+                bld.declare_var(v, ty);
+                types[index] = Some((v, ty));
+            }
+            if last_nb == nb_unknown_types {
+                return Err(LowerError::NoFixPointForVarTypes);
+            }
+            last_nb = nb_unknown_types;
         }
 
         self.var_types = types;
@@ -221,6 +244,9 @@ impl<'a> ConvertCtx<'a> {
             Entry(_) => (),
             Newhash(_) => (),
             Rehash(_) => {
+                let op_ty = self.var_types[ins.operands[0].index].unwrap().1;
+                let rh_ty = self.var_types[val.index].unwrap().1;
+                debug_assert_eq!(op_ty, rh_ty);
                 let a0 = bld.use_var(Variable::new(ins.operands[0].index));
                 let res = bld.ins().copy(a0);
                 bld.def_var(Variable::new(val.index), res);
@@ -247,9 +273,6 @@ impl<'a> ConvertCtx<'a> {
             OverflowFlag => (),
             CarryFlag => (),
             Add(n) => {
-                // TODO: If any overflow/carry flag depends on this instruction, we
-                // should change the encoding of this instruction to emit a carry
-                // bits.
                 let a0 = bld.use_var(Variable::new(ins.operands[0].index));
                 let a1 = bld.use_var(Variable::new(ins.operands[1].index));
                 let (of, cf) = (self.overflow_map.get(&val),
@@ -257,6 +280,7 @@ impl<'a> ConvertCtx<'a> {
                 match (n, of, cf) {
                     (NumberType::F32, _, _) |
                     (NumberType::F64, _, _) => {
+                        // TODO: Return an error instead.
                         debug_assert!(of == None);
                         debug_assert!(cf == None);
                         let res = bld.ins().fadd(a0, a1);
@@ -294,7 +318,38 @@ impl<'a> ConvertCtx<'a> {
                     }
                 };
             }
-            Sub(_n) => unimplemented!(),
+            Sub(n) => {
+                // TODO: If any overflow/carry flag depends on this instruction, we
+                // should change the encoding of this instruction to emit a carry
+                // bits.
+                let a0 = bld.use_var(Variable::new(ins.operands[0].index));
+                let a1 = bld.use_var(Variable::new(ins.operands[1].index));
+                let (of, cf) = (self.overflow_map.get(&val),
+                                self.carry_map.get(&val));
+                match (n, of, cf) {
+                    (NumberType::F32, _, _) |
+                    (NumberType::F64, _, _) => {
+                        // TODO: Return an error instead.
+                        debug_assert!(of == None);
+                        debug_assert!(cf == None);
+                        let res = bld.ins().fsub(a0, a1);
+                        bld.def_var(res_var, res);
+                    }
+                    (_, None, None) => {
+                        let res = bld.ins().isub(a0, a1);
+                        bld.def_var(res_var, res);
+                    }
+                    (_, None, Some(_cv)) => {
+                        unimplemented!();
+                    }
+                    (_i, Some(_ov), None) => {
+                        unimplemented!();
+                    }
+                    (_i, Some(_ov), Some(_cv)) => {
+                        unimplemented!();
+                    }
+                };
+            },
             Mul(_n) => unimplemented!(),
             Div(_n) => unimplemented!(),
             Rem(n) => {

@@ -16,6 +16,7 @@ pub enum LowerError {
     Protect,
     UnitIsNotAFunction,
     ComplexTypeNotLowered,
+    NoFixPointForVarTypes,
 }
 
 // TODO: impl Error for LowerError
