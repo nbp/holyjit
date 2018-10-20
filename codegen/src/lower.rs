@@ -298,7 +298,7 @@ impl<'a> ConvertCtx<'a> {
                     (i, Some(ov), None) => {
                         let res = bld.ins().iadd(a0, a1);
                         bld.def_var(res_var, res);
-                        // of = ((a0 | a1) ^ (a0 + a1)) > (max >> 1)
+                        // of = ((a0 | a1) ^ (a0 + a1)) >= sign_mask
                         let bor = bld.ins().bor(a0, a1);
                         let xor = bld.ins().bxor(bor, res);
                         let sign_mask = self.sign_mask(i);
@@ -309,7 +309,7 @@ impl<'a> ConvertCtx<'a> {
                         let (res, carry) = bld.ins().iadd_cout(a0, a1);
                         bld.def_var(res_var, res);
                         bld.def_var(*cv, carry);
-                        // of = ((a0 | a1) ^ (a0 + a1)) > (max >> 1)
+                        // of = ((a0 | a1) ^ (a0 + a1)) >= sign_mask
                         let bor = bld.ins().bor(a0, a1);
                         let xor = bld.ins().bxor(bor, res);
                         let sign_mask = self.sign_mask(i);
@@ -319,9 +319,6 @@ impl<'a> ConvertCtx<'a> {
                 };
             }
             Sub(n) => {
-                // TODO: If any overflow/carry flag depends on this instruction, we
-                // should change the encoding of this instruction to emit a carry
-                // bits.
                 let a0 = bld.use_var(Variable::new(ins.operands[0].index));
                 let a1 = bld.use_var(Variable::new(ins.operands[1].index));
                 let (of, cf) = (self.overflow_map.get(&val),
@@ -339,14 +336,33 @@ impl<'a> ConvertCtx<'a> {
                         let res = bld.ins().isub(a0, a1);
                         bld.def_var(res_var, res);
                     }
-                    (_, None, Some(_cv)) => {
-                        unimplemented!();
+                    (_, None, Some(cv)) => {
+                        let (res, borrow) = bld.ins().isub_bout(a0, a1);
+                        bld.def_var(res_var, res);
+                        bld.def_var(*cv, borrow);
                     }
-                    (_i, Some(_ov), None) => {
-                        unimplemented!();
+                    (i, Some(ov), None) => {
+                        let res = bld.ins().isub(a0, a1);
+                        bld.def_var(res_var, res);
+                        // of = ((a0 | ~(a1 - 1)) ^ (a0 - a1)) >= sign_mask
+                        let sign_mask = self.sign_mask(i) as u64;
+                        let v2 = bld.ins().iadd_imm(a1, Imm64::new((sign_mask - 1 | sign_mask) as i64));
+                        let bor = bld.ins().bor_not(a0, v2);
+                        let xor = bld.ins().bxor(bor, res);
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        bld.def_var(*ov, cmp);
                     }
-                    (_i, Some(_ov), Some(_cv)) => {
-                        unimplemented!();
+                    (i, Some(ov), Some(cv)) => {
+                        let (res, borrow) = bld.ins().isub_bout(a0, a1);
+                        bld.def_var(res_var, res);
+                        bld.def_var(*cv, borrow);
+                        // of = ((a0 | ~(a1 - 1)) ^ (a0 - a1)) >= sign_mask
+                        let sign_mask = self.sign_mask(i) as u64;
+                        let v2 = bld.ins().iadd_imm(a1, Imm64::new((sign_mask - 1 | sign_mask) as i64));
+                        let bor = bld.ins().bor_not(a0, v2);
+                        let xor = bld.ins().bxor(bor, res);
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        bld.def_var(*ov, cmp);
                     }
                 };
             },
