@@ -90,10 +90,12 @@ pub enum Opcode {
     Cast(ComplexTypeId),
 
     /// Extract overflow flag from the operation on which this instruction
-    /// depends on. (0 operand, 1 dependency)
+    /// depends on. The overflow flag indicate an overflow/underflow in signed
+    /// addition and substraction. (0 operand, 1 dependency)
     OverflowFlag,
     /// Extract carry flag from the operation on which this instruction depends
-    /// on. (0 operand, 1 dependency)
+    /// on. The carry flag indicate an overflow/underflow in unsigned
+    /// additions and substraction. (0 operand, 1 dependency)
     CarryFlag,
 
     /// Addition. (2 operands)

@@ -10,6 +10,9 @@ use lir::number::*;
 use lir::builder::*;
 use lir::types::*;
 
+mod lib;
+use lib::*;
+
 #[test]
 fn sub_overflow_i32_test() {
     let mut ctx_bld = ContextBuilder::new();
@@ -39,10 +42,12 @@ fn sub_overflow_i32_test() {
     let sub_overflow : fn(i32, i32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_overflow(0, 0), false);
-    assert_eq!(sub_overflow(i32::min_value() + 1, 1), false);
-    assert_eq!(sub_overflow(i32::min_value(), 1), true);
-    assert_eq!(sub_overflow(i32::max_value(), -1), true);
+    for i in i32_values().into_iter() {
+        for j in i32_values().into_iter() {
+            println!("sub_overflow({}, {}) == {}", i, j, sub_overflow(i, j));
+            assert_eq!(sub_overflow(i, j), i.overflowing_sub(j).1)
+        }
+    }
 }
 
 #[test]
@@ -74,9 +79,12 @@ fn sub_overflow_u32_test() {
     let sub_overflow : fn(u32, u32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_overflow(0, 0), false);
-    assert_eq!(sub_overflow(u32::min_value() + 1, 1), true);
-    assert_eq!(sub_overflow(u32::min_value(), 1), false);
+    for i in u32_values().into_iter() {
+        for j in u32_values().into_iter() {
+            println!("sub_overflow({}, {}) == {}", i, j, sub_overflow(i, j));
+            assert_eq!(sub_overflow(i, j), (i as i32).overflowing_sub(j as i32).1)
+        }
+    }
 }
 
 #[test]
@@ -108,10 +116,12 @@ fn sub_overflow_i64_test() {
     let sub_overflow : fn(i64, i64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_overflow(0, 0), false);
-    assert_eq!(sub_overflow(i64::min_value() + 1, 1), false);
-    assert_eq!(sub_overflow(i64::min_value(), 1), true);
-    assert_eq!(sub_overflow(i64::max_value(), -1), true);
+    for i in i64_values().into_iter() {
+        for j in i64_values().into_iter() {
+            println!("sub_overflow({}, {}) == {}", i, j, sub_overflow(i, j));
+            assert_eq!(sub_overflow(i, j), i.overflowing_sub(j).1)
+        }
+    }
 }
 
 #[test]
@@ -143,9 +153,12 @@ fn sub_overflow_u64_test() {
     let sub_overflow : fn(u64, u64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_overflow(0, 0), false);
-    assert_eq!(sub_overflow(u64::min_value() + 1, 1), true);
-    assert_eq!(sub_overflow(u64::min_value(), 1), false);
+    for i in u64_values().into_iter() {
+        for j in u64_values().into_iter() {
+            println!("sub_overflow({}, {}) == {}", i, j, sub_overflow(i, j));
+            assert_eq!(sub_overflow(i, j), (i as i64).overflowing_sub(j as i64).1)
+        }
+    }
 }
 
 #[test]
@@ -177,10 +190,12 @@ fn sub_carry_i32_test() {
     let sub_carry : fn(i32, i32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_carry(0, 0), false);
-    assert_eq!(sub_carry(i32::min_value() + 1, 1), false);
-    assert_eq!(sub_carry(i32::min_value(), 1), false);
-    assert_eq!(sub_carry(i32::max_value(), -1), true);
+    for i in i32_values().into_iter() {
+        for j in i32_values().into_iter() {
+            println!("sub_carry({}, {}) == {}", i, j, sub_carry(i, j));
+            assert_eq!(sub_carry(i, j), (i as u32).overflowing_sub(j as u32).1)
+        }
+    }
 }
 
 #[test]
@@ -212,9 +227,12 @@ fn sub_carry_u32_test() {
     let sub_carry : fn(u32, u32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_carry(0, 0), false);
-    assert_eq!(sub_carry(u32::min_value() + 1, 1), false);
-    assert_eq!(sub_carry(u32::min_value(), 1), true);
+    for i in u32_values().into_iter() {
+        for j in u32_values().into_iter() {
+            println!("sub_carry({}, {}) == {}", i, j, sub_carry(i, j));
+            assert_eq!(sub_carry(i, j), i.overflowing_sub(j).1)
+        }
+    }
 }
 
 #[test]
@@ -246,6 +264,12 @@ fn sub_carry_i64_test() {
     let sub_carry : fn(i64, i64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
+    for i in i64_values().into_iter() {
+        for j in i64_values().into_iter() {
+            println!("sub_carry({}, {}) == {}", i, j, sub_carry(i, j));
+            assert_eq!(sub_carry(i, j), (i as u64).overflowing_sub(j as u64).1)
+        }
+    }
     assert_eq!(sub_carry(0, 0), false);
     assert_eq!(sub_carry(i64::min_value() + 1, 1), false);
     assert_eq!(sub_carry(i64::min_value(), 1), false);
@@ -281,7 +305,10 @@ fn sub_carry_u64_test() {
     let sub_carry : fn(u64, u64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(sub_carry(0, 0), false);
-    assert_eq!(sub_carry(u64::min_value() + 1, 1), false);
-    assert_eq!(sub_carry(u64::min_value(), 1), true);
+    for i in u64_values().into_iter() {
+        for j in u64_values().into_iter() {
+            println!("sub_carry({}, {}) == {}", i, j, sub_carry(i, j));
+            assert_eq!(sub_carry(i, j), i.overflowing_sub(j).1)
+        }
+    }
 }

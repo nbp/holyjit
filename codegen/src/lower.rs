@@ -298,22 +298,24 @@ impl<'a> ConvertCtx<'a> {
                     (i, Some(ov), None) => {
                         let res = bld.ins().iadd(a0, a1);
                         bld.def_var(res_var, res);
-                        // of = ((a0 | a1) ^ (a0 + a1)) >= sign_mask
-                        let bor = bld.ins().bor(a0, a1);
-                        let xor = bld.ins().bxor(bor, res);
+                        // of = (a0 ^ res) & (a1 ^ res) >= sign_mask
+                        let x0 = bld.ins().bxor(res, a0);
+                        let x1 = bld.ins().bxor(res, a1);
+                        let xx = bld.ins().band(x0, x1);
                         let sign_mask = self.sign_mask(i);
-                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xx, Imm64::new(sign_mask as i64));
                         bld.def_var(*ov, cmp);
                     }
                     (i, Some(ov), Some(cv)) => {
                         let (res, carry) = bld.ins().iadd_cout(a0, a1);
                         bld.def_var(res_var, res);
                         bld.def_var(*cv, carry);
-                        // of = ((a0 | a1) ^ (a0 + a1)) >= sign_mask
-                        let bor = bld.ins().bor(a0, a1);
-                        let xor = bld.ins().bxor(bor, res);
+                        // of = (a0 ^ res) & (a1 ^ res) >= sign_mask
+                        let x0 = bld.ins().bxor(res, a0);
+                        let x1 = bld.ins().bxor(res, a1);
+                        let xx = bld.ins().band(x0, x1);
                         let sign_mask = self.sign_mask(i);
-                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xx, Imm64::new(sign_mask as i64));
                         bld.def_var(*ov, cmp);
                     }
                 };
@@ -344,24 +346,24 @@ impl<'a> ConvertCtx<'a> {
                     (i, Some(ov), None) => {
                         let res = bld.ins().isub(a0, a1);
                         bld.def_var(res_var, res);
-                        // of = ((a0 | ~(a1 - 1)) ^ (a0 - a1)) >= sign_mask
-                        let sign_mask = self.sign_mask(i) as u64;
-                        let v2 = bld.ins().iadd_imm(a1, Imm64::new((sign_mask - 1 | sign_mask) as i64));
-                        let bor = bld.ins().bor_not(a0, v2);
-                        let xor = bld.ins().bxor(bor, res);
-                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        // of = (a0 ^ res) & (~a1 ^ res) >= sign_mask
+                        let x0 = bld.ins().bxor(res, a0);
+                        let x1 = bld.ins().bxor_not(res, a1);
+                        let xx = bld.ins().band(x0, x1);
+                        let sign_mask = self.sign_mask(i);
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xx, Imm64::new(sign_mask as i64));
                         bld.def_var(*ov, cmp);
                     }
                     (i, Some(ov), Some(cv)) => {
                         let (res, borrow) = bld.ins().isub_bout(a0, a1);
                         bld.def_var(res_var, res);
                         bld.def_var(*cv, borrow);
-                        // of = ((a0 | ~(a1 - 1)) ^ (a0 - a1)) >= sign_mask
-                        let sign_mask = self.sign_mask(i) as u64;
-                        let v2 = bld.ins().iadd_imm(a1, Imm64::new((sign_mask - 1 | sign_mask) as i64));
-                        let bor = bld.ins().bor_not(a0, v2);
-                        let xor = bld.ins().bxor(bor, res);
-                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xor, Imm64::new(sign_mask as i64));
+                        // of = (a0 ^ res) & (~a1 ^ res) >= sign_mask
+                        let x0 = bld.ins().bxor(res, a0);
+                        let x1 = bld.ins().bxor_not(res, a1);
+                        let xx = bld.ins().band(x0, x1);
+                        let sign_mask = self.sign_mask(i);
+                        let cmp = bld.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, xx, Imm64::new(sign_mask as i64));
                         bld.def_var(*ov, cmp);
                     }
                 };

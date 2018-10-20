@@ -10,6 +10,9 @@ use lir::number::*;
 use lir::builder::*;
 use lir::types::*;
 
+mod lib;
+use lib::*;
+
 #[test]
 fn add1_test() {
     let mut ctx_bld = ContextBuilder::new();
@@ -70,11 +73,12 @@ fn add_overflow_i32_test() {
     let add_overflow : fn(i32, i32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_overflow(0, 0), false);
-    assert_eq!(add_overflow(-1, 1), true);
-    assert_eq!(add_overflow(i32::max_value() - 1, 1), false);
-    assert_eq!(add_overflow(i32::max_value(), 1), true);
-    assert_eq!(add_overflow(i32::min_value(), -1), true);
+    for i in i32_values().into_iter() {
+        for j in i32_values().into_iter() {
+            println!("add_overflow({}, {}) == {}", i, j, add_overflow(i, j));
+            assert_eq!(add_overflow(i, j), i.overflowing_add(j).1)
+        }
+    }
 }
 
 #[test]
@@ -106,10 +110,12 @@ fn add_overflow_u32_test() {
     let add_overflow : fn(u32, u32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_overflow(0, 0), false);
-    assert_eq!(add_overflow(u32::max_value() - 1, 1), false);
-    assert_eq!(add_overflow(u32::max_value() >> 1, 1), true);
-    assert_eq!(add_overflow(u32::max_value(), 1), true);
+    for i in u32_values().into_iter() {
+        for j in u32_values().into_iter() {
+            println!("add_overflow({}, {}) == {}", i, j, add_overflow(i, j));
+            assert_eq!(add_overflow(i, j), (i as i32).overflowing_add(j as i32).1)
+        }
+    }
 }
 
 #[test]
@@ -141,11 +147,12 @@ fn add_overflow_i64_test() {
     let add_overflow : fn(i64, i64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_overflow(0, 0), false);
-    assert_eq!(add_overflow(-1, 1), true);
-    assert_eq!(add_overflow(i64::max_value() - 1, 1), false);
-    assert_eq!(add_overflow(i64::max_value(), 1), true);
-    assert_eq!(add_overflow(i64::min_value(), -1), true);
+    for i in i64_values().into_iter() {
+        for j in i64_values().into_iter() {
+            println!("add_overflow({}, {}) == {}", i, j, add_overflow(i, j));
+            assert_eq!(add_overflow(i, j), i.overflowing_add(j).1)
+        }
+    }
 }
 
 #[test]
@@ -177,10 +184,12 @@ fn add_overflow_u64_test() {
     let add_overflow : fn(u64, u64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_overflow(0, 0), false);
-    assert_eq!(add_overflow(u64::max_value() - 1, 1), false);
-    assert_eq!(add_overflow(u64::max_value() >> 1, 1), true);
-    assert_eq!(add_overflow(u64::max_value(), 1), true);
+    for i in u64_values().into_iter() {
+        for j in u64_values().into_iter() {
+            println!("add_overflow({}, {}) == {}", i, j, add_overflow(i, j));
+            assert_eq!(add_overflow(i, j), (i as i64).overflowing_add(j as i64).1)
+        }
+    }
 }
 
 #[test]
@@ -212,11 +221,12 @@ fn add_carry_i32_test() {
     let add_carry : fn(i32, i32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_carry(0, 0), false);
-    assert_eq!(add_carry(-1, 1), true);
-    assert_eq!(add_carry(i32::max_value() - 1, 1), false);
-    assert_eq!(add_carry(i32::max_value(), 1), false);
-    assert_eq!(add_carry(i32::min_value(), -1), true);
+    for i in i32_values().into_iter() {
+        for j in i32_values().into_iter() {
+            println!("add_carry({}, {}) == {}", i, j, add_carry(i, j));
+            assert_eq!(add_carry(i, j), (i as u32).overflowing_add(j as u32).1)
+        }
+    }
 }
 
 #[test]
@@ -248,10 +258,12 @@ fn add_carry_u32_test() {
     let add_carry : fn(u32, u32) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_carry(0, 0), false);
-    assert_eq!(add_carry(u32::max_value() - 1, 1), false);
-    assert_eq!(add_carry(u32::max_value() >> 1, 1), false);
-    assert_eq!(add_carry(u32::max_value(), 1), true);
+    for i in u32_values().into_iter() {
+        for j in u32_values().into_iter() {
+            println!("add_carry({}, {}) == {}", i, j, add_carry(i, j));
+            assert_eq!(add_carry(i, j), i.overflowing_add(j).1)
+        }
+    }
 }
 
 #[test]
@@ -283,11 +295,12 @@ fn add_carry_i64_test() {
     let add_carry : fn(i64, i64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_carry(0, 0), false);
-    assert_eq!(add_carry(-1, 1), true);
-    assert_eq!(add_carry(i64::max_value() - 1, 1), false);
-    assert_eq!(add_carry(i64::max_value(), 1), false);
-    assert_eq!(add_carry(i64::min_value(), -1), true);
+    for i in i64_values().into_iter() {
+        for j in i64_values().into_iter() {
+            println!("add_carry({}, {}) == {}", i, j, add_carry(i, j));
+            assert_eq!(add_carry(i, j), (i as u64).overflowing_add(j as u64).1)
+        }
+    }
 }
 
 #[test]
@@ -319,8 +332,10 @@ fn add_carry_u64_test() {
     let add_carry : fn(u64, u64) -> bool = unsafe {
         mem::transmute(code.as_ptr())
     };
-    assert_eq!(add_carry(0, 0), false);
-    assert_eq!(add_carry(u64::max_value() - 1, 1), false);
-    assert_eq!(add_carry(u64::max_value() >> 1, 1), false);
-    assert_eq!(add_carry(u64::max_value(), 1), true);
+    for i in u64_values().into_iter() {
+        for j in u64_values().into_iter() {
+            println!("add_carry({}, {}) == {}", i, j, add_carry(i, j));
+            assert_eq!(add_carry(i, j), i.overflowing_add(j).1)
+        }
+    }
 }
