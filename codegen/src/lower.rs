@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use frontend::{FunctionBuilderContext, FunctionBuilder, Variable};
 
 use codegen::entity::EntityRef;
-use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode};
+use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode, MemFlags};
 use codegen::ir::immediates::{Ieee32, Ieee64, Imm64};
 use codegen::ir::condcodes::IntCC;
 use codegen::ir::types::*;
@@ -400,8 +400,20 @@ impl<'a> ConvertCtx<'a> {
             StaticAddress |
             Address => unimplemented!(),
             CPUAddress => unimplemented!(),
-            Load(_) => unimplemented!(),
-            Store(_ty) => unimplemented!(),
+            Load(ty) => {
+                let addr = bld.use_var(Variable::new(ins.operands[0].index));
+                let mut mf = MemFlags::new();
+                mf.set_notrap();
+                let res = bld.ins().load(self.cltype(ty)?, mf, addr, 0);
+                bld.def_var(res_var, res);
+            }
+            Store(_ty) => {
+                let addr = bld.use_var(Variable::new(ins.operands[0].index));
+                let val = bld.use_var(Variable::new(ins.operands[1].index));
+                let mut mf = MemFlags::new();
+                mf.set_notrap();
+                bld.ins().store(mf, val, addr, 0);
+            }
             LoadFenceLoad |
             LoadFenceStore |
             StoreFenceLoad |

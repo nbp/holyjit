@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+use std::mem::size_of;
+use lir::number::*;
+
 /// Iterate over interesting u32 numbers.
 pub fn u32_values() -> Vec<u32> {
     let mut res = vec![u32::min_value(), u32::max_value()];
@@ -39,3 +43,12 @@ pub fn i64_values() -> Vec<i64> {
     u64_values().into_iter().map(|x| x as i64).collect()
 }
 
+pub fn addr_type() -> NumberType {
+    match size_of::<usize>() {
+        1 => NumberType::U8,
+        2 => NumberType::U16,
+        4 => NumberType::U32,
+        8 => NumberType::U64,
+        _ => panic!("Pointer size is not yet supported")
+    }
+}
