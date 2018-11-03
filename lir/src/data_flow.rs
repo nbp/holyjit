@@ -311,10 +311,10 @@ impl Opcode {
             Eq(_) | Lt(_) | Le(_) |
             Ne(_) | Gt(_) | Ge(_) => ValueType::Boolean,
             StaticAddress |
-            Address => ValueType::Pointer,
-            CPUAddress => ValueType::None,
-            Load(_) => ValueType::None,
-            Store(ty) => ValueType::Complex(ty),
+            Address |
+            CPUAddress => ValueType::Pointer,
+            Load(ty) => ValueType::Complex(ty),
+            Store(_ty) => ValueType::None,
             LoadFenceLoad |
             LoadFenceStore |
             StoreFenceLoad |
