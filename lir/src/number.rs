@@ -110,3 +110,21 @@ impl Hash for NumberValue {
     }
 }
 
+impl From<(NumberType, usize)> for NumberValue {
+    fn from(input: (NumberType, usize)) -> NumberValue {
+        let val = input.1;
+        match input.0 {
+            NumberType::B1 => NumberValue::B1(val != 0),
+            NumberType::U8 => NumberValue::U8(val as u8),
+            NumberType::U16 => NumberValue::U16(val as u16),
+            NumberType::U32 => NumberValue::U32(val as u32),
+            NumberType::U64 => NumberValue::U64(val as u64),
+            NumberType::I8 => NumberValue::I8(val as i8),
+            NumberType::I16 => NumberValue::I16(val as i16),
+            NumberType::I32 => NumberValue::I32(val as i32),
+            NumberType::I64 => NumberValue::I64(val as i64),
+            NumberType::F32 => NumberValue::F32(val as f32),
+            NumberType::F64 => NumberValue::F64(val as f64),
+        }
+    }
+}

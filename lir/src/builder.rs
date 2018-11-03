@@ -2,6 +2,7 @@
 /// flow graph and its control flow graph.
 
 use std::collections::{HashMap, HashSet};
+use std::mem::{align_of, size_of};
 
 use unit::{Unit, UnitId};
 use data_flow::{Instruction, Opcode, Value};
@@ -95,6 +96,34 @@ impl ContextBuilder {
     /// Get a reference to the type corresponding to the given id.
     pub fn get_type(&self, id: ComplexTypeId) -> &ComplexType {
         self.ctx.get_type(id)
+    }
+
+    /// Records the position of a static reference in the tuple with which this
+    /// context is expected to be intialized with. Any references added to the
+    /// context with this function should also be mirrored in the tuple which
+    /// would be used to initialize the Context at runtime.
+    ///
+    /// Based on the alignment and size of the added value, this function
+    /// reserves space and returns the offset of the StaticAddress from which
+    /// the tuple value can be read.
+    pub fn add_untyped_ref(&mut self, align: usize, size: usize) -> usize {
+        let rest = self.ctx.expected_refs_size % align;
+        let padding = if rest == 0 { 0 } else { align - rest };
+        let base_offset = self.ctx.expected_refs_size + padding;
+        self.ctx.expected_refs_size = base_offset + size;
+        base_offset
+    }
+
+    /// Records the position of a static reference in the tuple with which this
+    /// context is expected to be intialized with. Any references added to the
+    /// context with this function should also be mirrored in the tuple which
+    /// would be used to initialize the Context at runtime.
+    ///
+    /// Based on the type of the added value, this functions reserves space and
+    /// returns the offset of the StaticAddress from which the tuple value can
+    /// be read.
+    pub fn add_typed_ref<T>(&mut self) -> usize {
+        self.add_untyped_ref(align_of::<T>(), size_of::<T>())
     }
 
     /// Finalize and return the context which hold the type information of

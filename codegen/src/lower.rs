@@ -397,7 +397,19 @@ impl<'a> ConvertCtx<'a> {
             ShiftRight(_i) => unimplemented!(),
             Eq(_) | Lt(_) | Le(_) |
             Ne(_) | Gt(_) | Ge(_) => unimplemented!(),
-            StaticAddress |
+            StaticAddress => {
+                let refs = self.ctx.get_static_refs_address() as i64;
+                let res = match mem::size_of::<usize>() {
+                    1 => bld.ins().iconst(types::I8, refs),
+                    2 => bld.ins().iconst(types::I16, refs),
+                    4 => bld.ins().iconst(types::I32, refs),
+                    8 => bld.ins().iconst(types::I64, refs),
+                    // TODO: Panic with a documented error code, or an explicit message
+                    // explaining how to fix this issue.
+                    _ => panic!("Pointer size is not yet supported")
+                };
+                bld.def_var(res_var, res);
+            }
             Address => unimplemented!(),
             CPUAddress => unimplemented!(),
             Load(ty) => {
