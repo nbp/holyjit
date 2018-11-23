@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use frontend::{FunctionBuilderContext, FunctionBuilder, Variable};
 
 use codegen::entity::EntityRef;
-use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode, MemFlags};
+use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode, MemFlags, SigRef};
 use codegen::ir::immediates::{Ieee32, Ieee64, Imm64};
 use codegen::ir::condcodes::IntCC;
 use codegen::ir::types::*;
@@ -35,6 +35,8 @@ struct ConvertCtx<'a> {
     pub overflow_map: HashMap<Value, Variable>,
     /// Map the math operation to the carry variable.
     pub carry_map: HashMap<Value, Variable>,
+    /// Map the unit, call or callunit to its list of Nth accessors.
+    pub nth_map: HashMap<Value, Vec<(u8, Variable)>>,
 }
 
 type OptVarType = Option<(Variable, types::Type)>;
@@ -78,10 +80,14 @@ impl<'a> ConvertCtx<'a> {
         }
     }
 
+    /// From any scalar type, returns the Cranelift AbiParam to use when
+    /// building a function signature.
     fn abiparam(&self, ty: ComplexTypeId) -> LowerResult<AbiParam> {
         Ok(AbiParam::new(self.cltype(ty)?))
     }
 
+    /// From a complex type id representing a function signature, return the
+    /// list of inputs and outputs which are corresponding to this signature.
     fn signature_io(&self, sig: ComplexTypeId) -> LowerResult<(&'a Vec<ComplexTypeId>, &'a Vec<ComplexTypeId>)> {
         let ty = self.ctx.get_type(sig);
         match ty {
@@ -92,8 +98,8 @@ impl<'a> ConvertCtx<'a> {
 
     /// Unit have a signature expressed as a type, we have to convert this signature
     /// into simpler types understood by Cranelift.
-    fn signature(&self) -> LowerResult<Signature> {
-        let (ins, outs) = self.signature_io(self.unit.sig)?;
+    fn signature(&self, sig: ComplexTypeId) -> LowerResult<Signature> {
+        let (ins, outs) = self.signature_io(sig)?;
 
         // At the moment, assume that all Units are going to be called with Rust
         // calling convention.
@@ -106,6 +112,20 @@ impl<'a> ConvertCtx<'a> {
             sig.returns.push(self.abiparam(ty)?);
         }
         Ok(sig)
+    }
+
+    /// Returns the Cranelift Signature of the compiled Unit.
+    fn unit_signature(&self) -> LowerResult<Signature> {
+       self.signature(self.unit.sig)
+    }
+
+    /// Calls to an external function implies that we have to import the
+    /// function signature, and annotate the call instruction with the function
+    /// signature index. This function returns the signature reference expected
+    /// by the call_indirect instruction of Cranelift.
+    fn sigref(&self, bld: &mut FunctionBuilder<Variable>, sig: ComplexTypeId) -> LowerResult<SigRef> {
+        let sig = self.signature(sig)?;
+        Ok(bld.import_signature(sig))
     }
 
     // Generate external name indexes based on the UnitId.
@@ -147,7 +167,11 @@ impl<'a> ConvertCtx<'a> {
                     match out.len() {
                         0 => continue,
                         1 => self.cltype(out[0])?,
-                        _ => unimplemented!(),
+                        // For cases which are larger than 1, we do not have any
+                        // simple types. This is resolved with the addition of
+                        // the Nth opcode, which would split the output tuple
+                        // and extract the type of each opcode.
+                        _ => continue,
                     }
                 }
                 ValueType::InheritFromOperands |
@@ -160,7 +184,7 @@ impl<'a> ConvertCtx<'a> {
             // Record Overflow and Carry dependency and map it to overflow /
             // carry variable. Note, that we expect to have only a single
             // overflow and carry per math operation. TODO: To handle multiple
-            // overflow flag and carry flag, should create new variable that
+            // overflow flag and carry flag, we should create new variable that
             // would be copied on overflow/carry encoding.
             let ins_res = match ins.opcode {
                 Opcode::OverflowFlag => self.overflow_map.insert(ins.dependencies[0], v),
@@ -184,22 +208,51 @@ impl<'a> ConvertCtx<'a> {
                     ValueType::InheritFromOperands => (),
                     _ => continue,
                 };
-                // In case of a fix-point just skip already types instructions.
+                // In case of a fix-point just skip instructions which already
+                // have a type.
                 match types[index] {
                     Some(_) => continue,
                     None => (),
                 };
-                // Pick the first operand type and assign it to the current
-                // instruction.
-                assert!(ins.operands.len() >= 1);
-                let ty = match types[ins.operands[0].index] {
-                    Some((_, ty)) => ty,
-                    None => {
-                        nb_unknown_types += 1;
-                        continue
-                    },
-                };
+                // Based on the opcode, record and infer the type inherited from
+                // its operands. Skip by using continue if the operands do not
+                // have a type yet. A fixed-point is used to ensure we revisit
+                // instruction which have missing types.
                 let v = Variable::new(index);
+                let ty = match ins.opcode {
+                    Opcode::Rehash(_) |
+                    Opcode::Phi => {
+                        assert!(ins.operands.len() >= 1);
+                        match types[ins.operands[0].index] {
+                            Some((_, ty)) => ty,
+                            None => {
+                                nb_unknown_types += 1;
+                                continue
+                            },
+                        }
+                    }
+                    Opcode::Nth(n) => {
+                        assert!(ins.operands.len() == 1);
+                        let ty = {
+                            let call = &self.unit.dfg.instructions[ins.operands[0].index];
+                            let id = match call.opcode.result_type() {
+                                ValueType::ResultOfSig(id) => id,
+                                // TODO: Raise a LowerError.
+                                _ => panic!("Opcode::Nth applied to something which does not have a signature type")
+                            };
+                            let (_, out) = self.signature_io(id)?;
+                            assert!(out.len() >= 2);
+                            assert!((n as usize) < out.len()); // TODO: Raise a LowerError
+                            let id = out[n as usize];
+                            self.cltype(id)?
+                        };
+                        let nths = self.nth_map.entry(ins.operands[0]).or_insert(vec![]);
+                        nths.push((n, v));
+                        ty
+                    }
+                    // TODO: LowerError: Unexpected InheritFromOperand opcode.
+                    _ => unimplemented!(),
+                };
                 bld.declare_var(v, ty);
                 types[index] = Some((v, ty));
             }
@@ -252,6 +305,7 @@ impl<'a> ConvertCtx<'a> {
                 bld.def_var(Variable::new(val.index), res);
             }
             Phi => (), // Phi are handled at the end of predecessor blocks.
+            Nth(_) => (), // Nth are handled by declare_var function.
             Const(val) => {
                 use self::NumberValue::*;
                 let res = match val {
@@ -501,7 +555,42 @@ impl<'a> ConvertCtx<'a> {
                     _ => unimplemented!("Switch with more than 2 branches"),
                 }
             }
-            Call(_id) => unimplemented!(),
+            Call(type_id) => {
+                // Generate the function call.
+                let fun = bld.use_var(Variable::new(ins.operands[0].index));
+                let args : Vec<_> =
+                    ins.operands.iter().skip(1)
+                        .map(|op| bld.use_var(Variable::new(op.index)))
+                        .collect();
+                let sig = self.sigref(bld, type_id)?;
+                let call = bld.ins().call_indirect(sig, fun, &args);
+                let results : Vec<_> = bld.inst_results(call).iter().cloned().collect();
+                assert_eq!(results.len(), self.signature_io(type_id)?.1.len());
+                match results.len() {
+                    0 => (),
+                    1 => bld.def_var(res_var, results[0]),
+                    _ => {
+                        match self.nth_map.get(&val) {
+                            Some(list) => {
+                                for &(n, var) in list {
+                                    bld.def_var(var, results[n as usize]);
+                                }
+                            },
+                            None => (),
+                        };
+                    },
+                };
+
+                match (seq.default, seq.unwind) {
+                    (None, None) => { bld.ins().trap(TrapCode::User(0)); },
+                    (Some(SuccessorIndex(succ)), None) |
+                    (None, Some(SuccessorIndex(succ))) => {
+                        let SequenceIndex(seq) = seq.successors[succ];
+                        bld.ins().jump(ebbs[seq], &[]);
+                    }
+                    (Some(_), Some(_)) => unimplemented!("We need to implement the unwinding logic."),
+                };
+            },
             CallUnit(_id) => unimplemented!(),
         };
 
@@ -580,7 +669,7 @@ impl<'a> ConvertCtx<'a> {
 
     /// Convert a LIR Unit into a Cranelift IR (Function).
     fn convert(&mut self) -> LowerResult<Function> {
-        let sig = self.signature()?;
+        let sig = self.unit_signature()?;
         let mut fn_builder_ctx = FunctionBuilderContext::<Variable>::new();
         let mut func = Function::with_name_signature(self.external_name(self.unit.id), sig);
         {
@@ -602,6 +691,7 @@ pub fn convert(isa: &TargetIsa, ctx: &Context, unit: &Unit) -> LowerResult<Funct
         var_types: vec![],
         overflow_map: HashMap::new(),
         carry_map: HashMap::new(),
+        nth_map: HashMap::new(),
     };
     println!("{:?}", unit);
     let func = cc.convert()?;

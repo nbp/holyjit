@@ -255,7 +255,7 @@ impl<'a> UnitBuilder<'a> {
     }
 
     /// Add a control flow instruction to end the current sequence.
-    pub fn end_ins(&mut self, ins: Instruction) {
+    pub fn end_ins(&mut self, ins: Instruction) -> Value {
         debug_assert!(ins.is_control());
         let is_return = ins.opcode.is_return();
         let value = self.dfg_add_ins(ins);
@@ -269,11 +269,13 @@ impl<'a> UnitBuilder<'a> {
         // statement in the list of outputs of the unit.
         if is_return {
             self.unit.outputs.push(value);
-        }
+        };
+
+        value
     }
 
     // Add a control flow instruction based on its opcode, operands and dependencies.
-    pub fn end_op_deps(&mut self, opcode: Opcode, operands: &[Value], dependencies: &[Value]) {
+    pub fn end_op_deps(&mut self, opcode: Opcode, operands: &[Value], dependencies: &[Value]) -> Value {
         self.end_ins(Instruction {
             opcode,
             operands: operands.iter().map(|x| *x).collect(),
@@ -284,7 +286,7 @@ impl<'a> UnitBuilder<'a> {
 
     /// Add a control flow instruction based only on its opcode, this function
     /// creates a conservative aliasing between load, store, calls and units.
-    pub fn end_op(&mut self, opcode: Opcode, operands: &[Value]) {
+    pub fn end_op(&mut self, opcode: Opcode, operands: &[Value]) -> Value {
         self.end_op_deps(opcode, operands, &[])
     }
 

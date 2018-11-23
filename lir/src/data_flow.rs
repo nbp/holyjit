@@ -97,6 +97,12 @@ pub enum Opcode {
     /// on. The carry flag indicate an overflow/underflow in unsigned
     /// additions and substraction. (0 operand, 1 dependency)
     CarryFlag,
+    /// Extract the returned value 'n' from its operand. This is used as a way
+    /// to extract the one returned value from a tuple of returned values. This
+    /// is made to be used with unit, call and callunit when they have tuples of
+    /// returned values. When lowered each would get its own binding, and be
+    /// handled separately.
+    Nth(u8),
 
     /// Addition. (2 operands)
     Add(number::NumberType),
@@ -224,13 +230,14 @@ pub enum Opcode {
     Switch(SwitchData),
 
     /// Call implements a function call, such as any Rust function, an assertion
-    /// or a drop function. The argument correspond to the signature of the
+    /// or a drop function. The argument corresponds to the signature of the
     /// function being called. (many operands: function + arguments, maybe
     /// default target, maybe unwind target)
     Call(ComplexTypeId),
 
-    /// CallUnit implements an internal Unit call or inline.
-    /// (many operands: arguments, maybe default target, maybe unwind target)
+    /// CallUnit implements an internal Unit call or inline, such as another
+    /// Function which is encoded in LIR format. (many operands: arguments,
+    /// maybe default target, maybe unwind target)
     CallUnit(unit::UnitId),
 }
 
@@ -285,6 +292,7 @@ impl Opcode {
         match self {
             Entry(_) |
             Newhash(_) => ValueType::None,
+            Nth(_) |
             Rehash(_) |
             Phi => ValueType::InheritFromOperands,
             Const(val) => ValueType::Number(val.into()),

@@ -24,7 +24,8 @@ pub struct CanUnwind(pub bool);
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub enum ComplexType {
     /// Functions are used to express the signature of Unit and external
-    /// functions.
+    /// functions. At the moment, all functions are assumed to follow the same
+    /// calling convention as rust functions.
     Function(Vec<ComplexTypeId>, Vec<ComplexTypeId>, CanUnwind),
     /// Structures are used to map each offsets with its corresponding type.
     Structure(Vec<(Offset, ComplexTypeId)>),

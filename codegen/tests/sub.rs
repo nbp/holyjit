@@ -31,7 +31,7 @@ fn sub_overflow_i32_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::I32), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -68,7 +68,7 @@ fn sub_overflow_u32_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::U32), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -105,7 +105,7 @@ fn sub_overflow_i64_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::I64), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -142,7 +142,7 @@ fn sub_overflow_u64_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::U64), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::OverflowFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -179,7 +179,7 @@ fn sub_carry_i32_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::I32), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -216,7 +216,7 @@ fn sub_carry_u32_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::U32), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -253,7 +253,7 @@ fn sub_carry_i64_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::I64), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };
@@ -294,7 +294,7 @@ fn sub_carry_u64_test() {
             let a1 = bld.unit_arg(1);
             let v1 = bld.add_op(Opcode::Sub(NumberType::U64), &[a0, a1]);
             let v2 = bld.add_op_deps(Opcode::CarryFlag, &[], &[v1]);
-            bld.end_op(Opcode::Return, &[v2])
+            bld.end_op(Opcode::Return, &[v2]);
         }
         bld.finish()
     };

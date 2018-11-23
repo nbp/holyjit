@@ -183,6 +183,11 @@ pub fn main() {
             .collect()
     };
 
+    // TODO: HolyJIT does not yet supports unwinding as this would require
+    // generating ELF code with eh_frame section, to encode the block address
+    // where to resume in case of unwinding. TODO: In the mean time we should
+    // enforce usage of "-C panic=abort", and tell the user about it to avoid
+    // surprises.
     let holyjit_enabled = true;
     let mut holyjit_cc = HolyJitCompilerCalls::new(holyjit_enabled);
     rustc_driver::run(move || {

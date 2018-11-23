@@ -115,7 +115,7 @@ fn sum_loop_test() {
             bld.dead_var(i);
             let v0 = bld.use_var(accu);
             bld.dead_var(accu);
-            bld.end_op(Opcode::Return, &[v0])
+            bld.end_op(Opcode::Return, &[v0]);
         }
         bld.finish()
     };
