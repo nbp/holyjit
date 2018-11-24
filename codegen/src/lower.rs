@@ -488,7 +488,27 @@ impl<'a> ConvertCtx<'a> {
                     }
                 };
             },
-            Mul(_n) => unimplemented!(),
+            Mul(n) => {
+                let a0 = bld.use_var(Variable::new(ins.operands[0].index));
+                let a1 = bld.use_var(Variable::new(ins.operands[1].index));
+                let (of, cf) = (self.overflow_map.get(&val),
+                                self.carry_map.get(&val));
+                match (n, of, cf) {
+                    (NumberType::F32, _, _) |
+                    (NumberType::F64, _, _) => {
+                        // TODO: Return an error instead.
+                        debug_assert!(of == None);
+                        debug_assert!(cf == None);
+                        let res = bld.ins().fmul(a0, a1);
+                        bld.def_var(res_var, res);
+                    }
+                    (_, None, None) => {
+                        let res = bld.ins().imul(a0, a1);
+                        bld.def_var(res_var, res);
+                    }
+                    _ => unimplemented!("TODO: No support for overflow or carry flag yet."),
+                }
+            },
             Div(_n) => unimplemented!(),
             Rem(n) => {
                 let a0 = bld.use_var(Variable::new(ins.operands[0].index));

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::mem::{size_of, transmute};
+use std::mem::size_of;
 use lir::number::*;
 
 /// Iterate over interesting u32 numbers.
@@ -44,11 +44,11 @@ pub fn i64_values() -> Vec<i64> {
 }
 
 pub fn f32_values() -> Vec<f32> {
-    u32_values().into_iter().map(|x| unsafe { transmute::<u32, f32>(x) }).collect()
+    u32_values().into_iter().map(|x| f32::from_bits(x)).collect()
 }
 
 pub fn f64_values() -> Vec<f64> {
-    u64_values().into_iter().map(|x| unsafe { transmute::<u64, f64>(x) }).collect()
+    u64_values().into_iter().map(|x| f64::from_bits(x)).collect()
 }
 
 pub fn addr_type() -> NumberType {
