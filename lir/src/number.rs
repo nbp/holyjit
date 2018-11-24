@@ -26,6 +26,15 @@ pub enum FloatType {
     F32, F64,
 }
 
+/// When comparing numerical types such as Floating point numbers, another
+/// aspect appear which is called "Ordered", which basically means that value
+/// can be compared. Unordered values would be values such as NaN.
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum OrderedType {
+    Ordered(NumberType),
+    Unordered(FloatType)
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)] /* derive(Hash)-manually */
 pub enum NumberValue {
     B1(bool),
@@ -125,6 +134,23 @@ impl From<(NumberType, usize)> for NumberValue {
             NumberType::I64 => NumberValue::I64(val as i64),
             NumberType::F32 => NumberValue::F32(val as f32),
             NumberType::F64 => NumberValue::F64(val as f64),
+        }
+    }
+}
+
+impl NumberType {
+    pub fn is_float(self) -> bool {
+        use self::NumberType::*;
+        match self {
+            F32 | F64 => true,
+            _ => false,
+        }
+    }
+    pub fn is_signed(self) -> bool {
+        use self::NumberType::*;
+        match self {
+            F32 | F64 | I8 | I16 | I32 | I64 => true,
+            _ => false,
         }
     }
 }

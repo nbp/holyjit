@@ -6,7 +6,7 @@ use frontend::{FunctionBuilderContext, FunctionBuilder, Variable};
 use codegen::entity::EntityRef;
 use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode, MemFlags, SigRef};
 use codegen::ir::immediates::{Ieee32, Ieee64, Imm64};
-use codegen::ir::condcodes::IntCC;
+use codegen::ir::condcodes::{IntCC, FloatCC};
 use codegen::ir::types::*;
 use codegen::ir::types;
 use codegen::settings::{self, CallConv};
@@ -16,7 +16,7 @@ use codegen::isa::TargetIsa;
 use lir::unit::{Unit, UnitId};
 use lir::context::Context;
 use lir::types::{ComplexTypeId, ComplexType};
-use lir::number::{NumberType, SignedType, NumberValue};
+use lir::number::{NumberType, SignedType, OrderedType, NumberValue};
 use lir::control_flow::{Sequence, SequenceIndex, SuccessorIndex};
 use lir::data_flow::{Opcode, Instruction, ValueType, Value};
 use error::{LowerResult, LowerError};
@@ -40,6 +40,70 @@ struct ConvertCtx<'a> {
 }
 
 type OptVarType = Option<(Variable, types::Type)>;
+
+enum IFCond {
+    IntCond(IntCC),
+    FloatCond(FloatCC),
+}
+fn opcode_to_cond(op: Opcode) -> IFCond {
+    use self::Opcode::*;
+    use self::OrderedType::*;
+    use self::IFCond::*;
+    match op {
+        Ord(Ordered(t)) => {
+            assert_eq!(t.is_float(), true);
+            FloatCond(FloatCC::Ordered)
+        }
+        Eq(Ordered(t)) => {
+            match t.is_float() {
+                true => FloatCond(FloatCC::Equal),
+                false => IntCond(IntCC::Equal),
+            }
+        }
+        Ne(Ordered(t)) => {
+            match t.is_float() {
+                true => FloatCond(FloatCC::OrderedNotEqual),
+                false => IntCond(IntCC::NotEqual),
+            }
+        }
+        Lt(Ordered(t)) => {
+            match (t.is_float(), t.is_signed()) {
+                (true, _) => FloatCond(FloatCC::LessThan),
+                (false, true) => IntCond(IntCC::SignedLessThan),
+                (false, false) => IntCond(IntCC::UnsignedLessThan),
+            }
+        }
+        Ge(Ordered(t)) => {
+            match (t.is_float(), t.is_signed()) {
+                (true, _) => FloatCond(FloatCC::GreaterThanOrEqual),
+                (false, true) => IntCond(IntCC::SignedGreaterThanOrEqual),
+                (false, false) => IntCond(IntCC::UnsignedGreaterThanOrEqual),
+            }
+        }
+        Le(Ordered(t)) => {
+            match (t.is_float(), t.is_signed()) {
+                (true, _) => FloatCond(FloatCC::LessThanOrEqual),
+                (false, true) => IntCond(IntCC::SignedLessThanOrEqual),
+                (false, false) => IntCond(IntCC::UnsignedLessThanOrEqual),
+            }
+        }
+        Gt(Ordered(t)) => {
+            match (t.is_float(), t.is_signed()) {
+                (true, _) => FloatCond(FloatCC::GreaterThan),
+                (false, true) => IntCond(IntCC::SignedGreaterThan),
+                (false, false) => IntCond(IntCC::UnsignedGreaterThan),
+            }
+        }
+        Ord(Unordered(_)) => FloatCond(FloatCC::Unordered),
+        Eq(Unordered(_)) => FloatCond(FloatCC::UnorderedOrEqual),
+        Ne(Unordered(_)) => FloatCond(FloatCC::NotEqual),
+        Lt(Unordered(_)) => FloatCond(FloatCC::UnorderedOrLessThan),
+        Ge(Unordered(_)) => FloatCond(FloatCC::UnorderedOrGreaterThanOrEqual),
+        Le(Unordered(_)) => FloatCond(FloatCC::UnorderedOrLessThanOrEqual),
+        Gt(Unordered(_)) => FloatCond(FloatCC::UnorderedOrGreaterThan),
+        _ => panic!("Unexpected conditional opcode")
+    }
+}
 
 impl<'a> ConvertCtx<'a> {
     fn sign_mask(&self, ty: NumberType) -> u64 {
@@ -75,6 +139,8 @@ impl<'a> ConvertCtx<'a> {
             &Scalar(U16) | &Scalar(I16) => Ok(types::I16),
             &Scalar(U32) | &Scalar(I32) => Ok(types::I32),
             &Scalar(U64) | &Scalar(I64) => Ok(types::I64),
+            &Scalar(F32) => Ok(types::F32),
+            &Scalar(F64) => Ok(types::F64),
             &Vector(_, _) => unimplemented!(),
             _ => Err(LowerError::ComplexTypeNotLowered),
         }
@@ -449,8 +515,16 @@ impl<'a> ConvertCtx<'a> {
             BwNot(_b) => unimplemented!(),
             ShiftLeft(_i) => unimplemented!(),
             ShiftRight(_i) => unimplemented!(),
-            Eq(_) | Lt(_) | Le(_) |
-            Ne(_) | Gt(_) | Ge(_) => unimplemented!(),
+            Ord(_) | Eq(_) | Lt(_) | Le(_) |
+            Ne(_) | Gt(_) | Ge(_) => {
+                let a0 = bld.use_var(Variable::new(ins.operands[0].index));
+                let a1 = bld.use_var(Variable::new(ins.operands[1].index));
+                let res = match opcode_to_cond(ins.opcode) {
+                    IFCond::IntCond(cc) => bld.ins().icmp(cc, a0, a1),
+                    IFCond::FloatCond(cc) => bld.ins().fcmp(cc, a0, a1),
+                };
+                bld.def_var(res_var, res);
+            }
             StaticAddress => {
                 let refs = self.ctx.get_static_refs_address() as i64;
                 let res = match mem::size_of::<usize>() {

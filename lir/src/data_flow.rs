@@ -141,18 +141,21 @@ pub enum Opcode {
     /// Shift right. (2 operands: result = lhs >> rhs)
     ShiftRight(number::SignedType),
 
+    /// Ordered. (2 operands)
+    /// Test if the operands are comparable.
+    Ord(number::OrderedType),
     /// Equal. (2 operands)
-    Eq(number::NumberType),
+    Eq(number::OrderedType),
     /// Less than. (2 operands: result = lhs < rhs)
-    Lt(number::NumberType),
+    Lt(number::OrderedType),
     /// Less than or equal. (2 operands: result = lhs <= rhs)
-    Le(number::NumberType),
+    Le(number::OrderedType),
     /// Not equal. (2 operands)
-    Ne(number::NumberType),
+    Ne(number::OrderedType),
     /// Greather than. (2 operands: result = lhs > rhs)
-    Gt(number::NumberType),
+    Gt(number::OrderedType),
     // Greather than or equal. (2 operands: result = lhs >= rhs)
-    Ge(number::NumberType),
+    Ge(number::OrderedType),
 
     /// StaticAddress is used to refer to data which is not yet known at compile
     /// time, but known at the execution, such as function pointer addresses.
@@ -316,7 +319,7 @@ impl Opcode {
             BwNot(b) => ValueType::Number(b.into()),
             ShiftLeft(i) => ValueType::Number(i.into()),
             ShiftRight(i) => ValueType::Number(i.into()),
-            Eq(_) | Lt(_) | Le(_) |
+            Ord(_) | Eq(_) | Lt(_) | Le(_) |
             Ne(_) | Gt(_) | Ge(_) => ValueType::Boolean,
             StaticAddress |
             Address |
