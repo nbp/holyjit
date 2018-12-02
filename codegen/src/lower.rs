@@ -51,7 +51,7 @@ fn opcode_to_cond(op: Opcode) -> IFCond {
     use self::IFCond::*;
     match op {
         Ord(Ordered(t)) => {
-            assert_eq!(t.is_float(), true);
+            assert!(t.is_float());
             FloatCond(FloatCC::Ordered)
         }
         Eq(Ordered(t)) => {
