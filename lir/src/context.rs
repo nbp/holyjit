@@ -1,10 +1,23 @@
 use std::{ptr, mem};
 use types::{ComplexType, ComplexTypeId};
 
-// Pointer to the static memory. Note, this is not a u8 slices because this
-// contains an heterogeneous list of references, symbols and values which might
-// be of different type and sizes.
+/// Pointer to the static memory. Note, this is not a u8 slices because this
+/// contains an heterogeneous list of references, symbols and values which might
+/// be of different type and sizes.
 type StaticStorage = *const ();
+
+/// Information stored in the context for each StackAddress instruction in the
+/// data flow. This contains the ComplexTypeId, the size and its alignment.
+pub struct StackAddressInfo {
+    /// Type to be stored in the space reserved for the given stack address.
+    pub ty: ComplexTypeId,
+    /// Size of the type which is being stored. TODO: This should be a property
+    /// of the type.
+    pub size: usize,
+    /// Alignment required for the type stored on the stack. TODO: This should
+    /// be a property of the type.
+    pub align: usize,
+}
 
 /// A context is a structure which centralize all the data necessary for the
 /// execution of any Unit. It holds the collection of complex types, and any
@@ -14,6 +27,12 @@ pub struct Context {
     /// instructions. It holds the next value to be allocated if any of these
     /// instruction should be added to the graph.
     wrapper_seed: usize,
+
+    /// This vector is used for StackAddress instructions. It's length is used
+    /// to compute the next available stack address identifer. Each index
+    /// identify uniquely a stack address and as such prevent aliasing of Stack
+    /// spaces holding data of the same type.
+    stack_info: Vec<StackAddressInfo>,
 
     /// This vector holds the list of types references by all Unit associated to
     /// this context. Any ComplexTypeId is an index in this Vector.
@@ -44,6 +63,7 @@ impl Context {
     pub fn new() -> Context {
         Context {
             wrapper_seed: 0,
+            stack_info: vec![],
             types: vec![],
             refs_ptr: ptr::null(),
             expected_refs_size: 0,
@@ -57,6 +77,21 @@ impl Context {
         let value = self.wrapper_seed;
         self.wrapper_seed += 1;
         value
+    }
+
+    /// Create a new stack seed, such that we can avoid aliasing of stack
+    /// values. This function is used by the ContextBuilder for creating new
+    /// StackAddress instructions.
+    pub fn add_stack_info(&mut self, ty: ComplexTypeId, size: usize, align: usize) -> usize {
+        let value = self.stack_info.len();
+        self.stack_info.push(StackAddressInfo { ty, size, align });
+        value
+    }
+
+    /// Extract the StackAddressInfo from the index of a StackAddress
+    /// instruction.
+    pub fn get_stack_info(&self, index: usize) -> &StackAddressInfo {
+        &self.stack_info[index]
     }
 
     /// Add a new complex type in the list of known types. This function is used

@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use frontend::{FunctionBuilderContext, FunctionBuilder, Variable};
 
 use codegen::entity::EntityRef;
-use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode, MemFlags, SigRef};
+use codegen::ir::{Ebb, ExternalName, Function, Signature, AbiParam, InstBuilder, TrapCode, MemFlags, SigRef, StackSlotData, StackSlotKind};
 use codegen::ir::immediates::{Ieee32, Ieee64, Imm64};
 use codegen::ir::condcodes::{IntCC, FloatCC};
+use codegen::ir::entities::StackSlot;
 use codegen::ir::types::*;
 use codegen::ir::types;
 use codegen::settings::{self, CallConv};
@@ -37,6 +38,8 @@ struct ConvertCtx<'a> {
     pub carry_map: HashMap<Value, Variable>,
     /// Map the unit, call or callunit to its list of Nth accessors.
     pub nth_map: HashMap<Value, Vec<(u8, Variable)>>,
+    /// StackAddress to StackSlot mapping
+    pub stack_map: HashMap<usize, StackSlot>,
 }
 
 type OptVarType = Option<(Variable, types::Type)>;
@@ -252,12 +255,30 @@ impl<'a> ConvertCtx<'a> {
             // overflow and carry per math operation. TODO: To handle multiple
             // overflow flag and carry flag, we should create new variable that
             // would be copied on overflow/carry encoding.
-            let ins_res = match ins.opcode {
-                Opcode::OverflowFlag => self.overflow_map.insert(ins.dependencies[0], v),
-                Opcode::CarryFlag => self.carry_map.insert(ins.dependencies[0], v),
-                _ => None,
+            //
+            // When seeing a StackAddress instruction, register a corresponding
+            // StackSlot in Cranelift function, which would later be used when
+            // loading the address.
+            match ins.opcode {
+                Opcode::OverflowFlag => {
+                    let exists = self.overflow_map.insert(ins.dependencies[0], v);
+                    debug_assert!(exists == None);
+                }
+                Opcode::CarryFlag => {
+                    let exists = self.carry_map.insert(ins.dependencies[0], v);
+                    debug_assert!(exists == None);
+                }
+                Opcode::StackAddress(id) => {
+                    let size = {
+                        let info = self.ctx.get_stack_info(id);
+                        info.size as u32
+                    };
+                    let slot = bld.create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size));
+                    let exists = self.stack_map.insert(id, slot);
+                    debug_assert!(exists == None);
+                }
+                _ => (),
             };
-            debug_assert!(ins_res == None);
         }
 
         // Infer type from the operands. Ideally instructions should be sorted
@@ -558,8 +579,13 @@ impl<'a> ConvertCtx<'a> {
                 };
                 bld.def_var(res_var, res);
             }
-            Address => unimplemented!(),
             CPUAddress => unimplemented!(),
+            StackAddress(id) => {
+                let slot = self.stack_map.get(&id).clone();
+                let slot = *slot.expect("StackAddress should have a registered slot.");
+                let res = bld.ins().stack_addr(self.isa.pointer_type(), slot, 0);
+                bld.def_var(res_var, res);
+            }
             Load(ty) => {
                 let addr = bld.use_var(Variable::new(ins.operands[0].index));
                 let mut mf = MemFlags::new();
@@ -786,6 +812,7 @@ pub fn convert(isa: &TargetIsa, ctx: &Context, unit: &Unit) -> LowerResult<Funct
         overflow_map: HashMap::new(),
         carry_map: HashMap::new(),
         nth_map: HashMap::new(),
+        stack_map: HashMap::new(),
     };
     println!("{:?}", unit);
     let func = cc.convert()?;

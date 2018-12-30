@@ -72,6 +72,9 @@ impl ContextBuilder {
     pub fn get_newhash(&mut self) -> Opcode {
         Opcode::Newhash(self.ctx.get_hash_seed())
     }
+    pub fn get_stackaddress(&mut self, ty: ComplexTypeId, size: usize, align: usize) -> Opcode {
+        Opcode::StackAddress(self.ctx.add_stack_info(ty, size, align))
+    }
 
     /// Add a type and reuse a type which already got registered if any.
     pub fn add_type(&mut self, ty: ComplexType) -> ComplexTypeId {

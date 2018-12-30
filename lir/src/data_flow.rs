@@ -166,11 +166,20 @@ pub enum Opcode {
     /// cpuid.
     /// (0 operand)
     CPUAddress,
-    /// Get the address of where the input operand is stored. At the end of the
-    /// pipeline, if any of these instructions remain it enforces the data to
-    /// live in memory at least as long as the address exists.
-    /// (1 operand)
-    Address,
+    /// StackAddress is used for storing content on the stack. The |usize|
+    /// argument is used as a unique identifier for the reserved space, as we do
+    /// not want to share addresses by default. These address spaces are assumed
+    /// to be uninitialize when they are created and should be written down with
+    /// a Store operation.
+    ///
+    /// Each unique address unique identifer is accosicated a minimum size and
+    /// alignment as part of the Context, and not as part of the data-flow.
+    ///
+    /// NOTE: At the moment there is no support for dynamic stack space
+    /// allocation. (0 operand)
+    // TODO: Add DeadAddress to mark the space as non-initialized and free the
+    // stack address space.
+    StackAddress(usize),
 
     /// Load content from the address. (1 operand: result = *input)
     Load(ComplexTypeId),
@@ -322,7 +331,7 @@ impl Opcode {
             Ord(_) | Eq(_) | Lt(_) | Le(_) |
             Ne(_) | Gt(_) | Ge(_) => ValueType::Boolean,
             StaticAddress |
-            Address |
+            StackAddress(_) |
             CPUAddress => ValueType::Pointer,
             Load(ty) => ValueType::Complex(ty),
             Store(_ty) => ValueType::None,
