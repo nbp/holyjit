@@ -21,7 +21,7 @@ pub struct CanUnwind(pub bool);
 /// A complex type is either a function signature, an structure, an union, a
 /// pointer, a scalar or a vector of scalar. All these types should be aggregaed
 /// globally, such that that can be used across multiple Units.
-#[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Hash, Clone)]
 pub enum ComplexType {
     /// Functions are used to express the signature of Unit and external
     /// functions. At the moment, all functions are assumed to follow the same

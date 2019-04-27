@@ -6,6 +6,8 @@ authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
 # Lock dynasm and serde_derive in order to build against old versions of
 # rustc.
 [dependencies]
+holyjit_lir = { path = "../lir" }
+holyjit_codegen = { path = "../codegen" }
 dynasm = "=0.1.3"
 dynasmrt = "=0.1.3"
 serde = "1.0"

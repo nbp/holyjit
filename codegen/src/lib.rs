@@ -75,7 +75,7 @@ impl CodeGenerator {
 }
 
 impl JitCode {
-    pub fn as_ptr(&self) -> *const u8 {
+    pub unsafe fn as_ptr(&self) -> *const u8 {
         self.code.as_ptr()
     }
 }

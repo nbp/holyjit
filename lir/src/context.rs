@@ -8,6 +8,7 @@ type StaticStorage = *const ();
 
 /// Information stored in the context for each StackAddress instruction in the
 /// data flow. This contains the ComplexTypeId, the size and its alignment.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct StackAddressInfo {
     /// Type to be stored in the space reserved for the given stack address.
     pub ty: ComplexTypeId,
@@ -22,6 +23,7 @@ pub struct StackAddressInfo {
 /// A context is a structure which centralize all the data necessary for the
 /// execution of any Unit. It holds the collection of complex types, and any
 /// counter related to having unique identifiers.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Context {
     /// This counter is used for both Rehash instructions and Newhash
     /// instructions. It holds the next value to be allocated if any of these
@@ -41,10 +43,11 @@ pub struct Context {
     /// If any, this is the pointer to the memory which contains static
     /// information filled by the static compiler with all the symbol references
     /// or values. This fields should be set with the function
-    /// `set_statics_refs` on the constructed or deserialized Context. Once set,
+    /// `set_statics_refs` on the constructed or deserialized `Context`. Once set,
     /// it is not allowed to change. Attempting to build any unit without
-    /// setting this value will cause a compilation error if the Unit uses an
-    /// StaticAddress-es.
+    /// setting this value will cause a compilation error if the `Unit` uses an
+    /// `StaticAddress`-es.
+    #[serde(skip, default="ptr::null")]
     refs_ptr: StaticStorage,
 
     /// When a Context is created with the ContextBuilder, this field is mutated

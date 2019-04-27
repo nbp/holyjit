@@ -27,11 +27,6 @@ pub struct ContextBuilder {
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct Variable(u32);
 
-/// This structure is used to capture variable states, and used to insert Phi
-/// instructions if needed.
-pub struct SSABuilder {
-}
-
 pub struct UnitBuilder<'a> {
     /// Identifier of the constructed unit.
     unit: Unit,
