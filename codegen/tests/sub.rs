@@ -19,9 +19,9 @@ fn sub_overflow_i32_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32, t_i32], vec![t_bool], CanUnwind(true)));
+        let t_i32 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::I32));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_i32, t_i32], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -56,9 +56,9 @@ fn sub_overflow_u32_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_u32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U32));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u32, t_u32], vec![t_bool], CanUnwind(true)));
+        let t_u32 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U32));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u32, t_u32], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -93,9 +93,9 @@ fn sub_overflow_i64_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_i64 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I64));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i64, t_i64], vec![t_bool], CanUnwind(true)));
+        let t_i64 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::I64));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_i64, t_i64], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -130,9 +130,9 @@ fn sub_overflow_u64_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_u64 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U64));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u64, t_u64], vec![t_bool], CanUnwind(true)));
+        let t_u64 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U64));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u64, t_u64], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -167,9 +167,9 @@ fn sub_carry_i32_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32, t_i32], vec![t_bool], CanUnwind(true)));
+        let t_i32 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::I32));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_i32, t_i32], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -204,9 +204,9 @@ fn sub_carry_u32_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_u32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U32));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u32, t_u32], vec![t_bool], CanUnwind(true)));
+        let t_u32 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U32));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u32, t_u32], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -241,9 +241,9 @@ fn sub_carry_i64_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_i64 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I64));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i64, t_i64], vec![t_bool], CanUnwind(true)));
+        let t_i64 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::I64));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_i64, t_i64], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {
@@ -282,9 +282,9 @@ fn sub_carry_u64_test() {
     let sub1_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Sub the function signature.
-        let t_u64 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U64));
-        let t_bool = bld.ctx().add_type(ComplexType::Scalar(NumberType::B1));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u64, t_u64], vec![t_bool], CanUnwind(true)));
+        let t_u64 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U64));
+        let t_bool = bld.ctx().add_type(ComplexType::new_scalar(NumberType::B1));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u64, t_u64], vec![t_bool], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         {

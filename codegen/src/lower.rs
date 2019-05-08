@@ -16,7 +16,7 @@ use codegen::isa::TargetIsa;
 
 use lir::unit::{Unit, UnitId};
 use lir::context::Context;
-use lir::types::{ComplexTypeId, ComplexType};
+use lir::types::{ComplexTypeId, DataRepr};
 use lir::number::{NumberType, SignedType, OrderedType, NumberValue};
 use lir::control_flow::{Sequence, SequenceIndex, SuccessorIndex};
 use lir::data_flow::{Opcode, Instruction, ValueType, Value};
@@ -132,19 +132,18 @@ impl<'a> ConvertCtx<'a> {
     }
 
     fn cltype(&self, ty: ComplexTypeId) -> LowerResult<types::Type> {
-        use self::ComplexType::*;
+        use self::DataRepr::*;
         use self::NumberType::*;
         let ty = self.ctx.get_type(ty);
-        match ty {
-            &Pointer => Ok(self.isa.pointer_type()),
-            &Scalar(B1) => Ok(types::B1),
-            &Scalar(U8) | &Scalar(I8) => Ok(types::I8),
-            &Scalar(U16) | &Scalar(I16) => Ok(types::I16),
-            &Scalar(U32) | &Scalar(I32) => Ok(types::I32),
-            &Scalar(U64) | &Scalar(I64) => Ok(types::I64),
-            &Scalar(F32) => Ok(types::F32),
-            &Scalar(F64) => Ok(types::F64),
-            &Vector(_, _) => unimplemented!(),
+        match ty.data {
+            Pointer => Ok(self.isa.pointer_type()),
+            Number(B1) => Ok(types::B1),
+            Number(U8) | Number(I8) => Ok(types::I8),
+            Number(U16) | Number(I16) => Ok(types::I16),
+            Number(U32) | Number(I32) => Ok(types::I32),
+            Number(U64) | Number(I64) => Ok(types::I64),
+            Number(F32) => Ok(types::F32),
+            Number(F64) => Ok(types::F64),
             _ => Err(LowerError::ComplexTypeNotLowered),
         }
     }
@@ -159,8 +158,8 @@ impl<'a> ConvertCtx<'a> {
     /// list of inputs and outputs which are corresponding to this signature.
     fn signature_io(&self, sig: ComplexTypeId) -> LowerResult<(&'a Vec<ComplexTypeId>, &'a Vec<ComplexTypeId>)> {
         let ty = self.ctx.get_type(sig);
-        match ty {
-            &ComplexType::Function(ref ins, ref outs, ref _unwind) => Ok((ins, outs)),
+        match ty.data {
+            DataRepr::Function(ref ins, ref outs, ref _unwind) => Ok((ins, outs)),
             _ => Err(LowerError::UnitIsNotAFunction),
         }
     }

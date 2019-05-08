@@ -33,11 +33,11 @@ fn call_ret_tuple() {
     let unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_u8 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U8));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u8], vec![t_u8], CanUnwind(true)));
+        let t_u8 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U8));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u8], vec![t_u8], CanUnwind(true)));
         // TODO: Unwinding is not supported without DWARF at the moment and
         // eh_frame describing where to resume the execution when unwinding.
-        let t_ret_tuple = bld.ctx().add_type(ComplexType::Function(vec![t_u8], vec![t_u8, t_u8], CanUnwind(false)));
+        let t_ret_tuple = bld.ctx().add_type(ComplexType::new_fn(vec![t_u8], vec![t_u8, t_u8], CanUnwind(false)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         let s1 = bld.create_sequence();
@@ -78,11 +78,11 @@ fn call_sub_add() {
     let unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_u8 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U8));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u8, t_u8], vec![t_u8], CanUnwind(true)));
+        let t_u8 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U8));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u8, t_u8], vec![t_u8], CanUnwind(true)));
         // TODO: Unwinding is not supported without DWARF at the moment and
         // eh_frame describing where to resume the execution when unwinding.
-        let t_fun = bld.ctx().add_type(ComplexType::Function(vec![t_u8, t_u8], vec![t_u8, t_u8], CanUnwind(false)));
+        let t_fun = bld.ctx().add_type(ComplexType::new_fn(vec![t_u8, t_u8], vec![t_u8, t_u8], CanUnwind(false)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         let s1 = bld.create_sequence();
@@ -128,11 +128,11 @@ fn call_diff_sub_add() {
     let unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_u8 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U8));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u8, t_u8], vec![t_u8], CanUnwind(true)));
+        let t_u8 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U8));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u8, t_u8], vec![t_u8], CanUnwind(true)));
         // TODO: Unwinding is not supported without DWARF at the moment and
         // eh_frame describing where to resume the execution when unwinding.
-        let t_fun = bld.ctx().add_type(ComplexType::Function(vec![t_u8, t_u8], vec![t_u8], CanUnwind(false)));
+        let t_fun = bld.ctx().add_type(ComplexType::new_fn(vec![t_u8, t_u8], vec![t_u8], CanUnwind(false)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence();
         let s1 = bld.create_sequence();

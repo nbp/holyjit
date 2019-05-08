@@ -18,16 +18,26 @@ pub struct Offset(pub usize);
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Hash, Clone, Copy)]
 pub struct CanUnwind(pub bool);
 
-/// A complex type is either a function signature, an structure, an union, a
-/// pointer, a scalar or a vector of scalar. All these types should be aggregaed
-/// globally, such that that can be used across multiple Units.
+/// Define the preferred memory representation for one value. This is mainly
+/// used to determine the way to transfer function's arguments.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Hash, Clone)]
-pub enum ComplexType {
+pub enum MemoryRepr {
+    None,
+    Register,
+    RegisterPair,
+    Vector{ bytes: usize },
+    PointerTo{ bytes: usize },
+}
+
+/// Define how a type is composed.
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Hash, Clone)]
+pub enum DataRepr {
     /// Functions are used to express the signature of Unit and external
     /// functions. At the moment, all functions are assumed to follow the same
     /// calling convention as rust functions.
     Function(Vec<ComplexTypeId>, Vec<ComplexTypeId>, CanUnwind),
     /// Structures are used to map each offsets with its corresponding type.
+    /// Offsets are expected to be sorted by increasing order.
     Structure(Vec<(Offset, ComplexTypeId)>),
     /// Unions are used to select between multiple structures.
     Union(Vec<ComplexTypeId>),
@@ -35,7 +45,45 @@ pub enum ComplexType {
     /// This simplify the problem by not having to handle recursive types.
     Pointer,
     /// A Scalar represents a number.
-    Scalar(number::NumberType),
-    /// A Vector represents an aggregation of Scalar.
-    Vector(number::NumberType, usize),
+    Number(number::NumberType),
+}
+
+/// A complex type is defined as a way to represent a value in memory as well as
+/// the meaning of its compoenents. Types are recorded on the Context which is
+/// shared across multiple Units, such that one Unit can call another and use
+/// the same ComplexTypeId.
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Hash, Clone)]
+pub struct ComplexType {
+    /// Defines the memory representation of this type and how it is to be
+    /// stored and transfered.
+    pub mem: MemoryRepr,
+    /// Defines the data representation of this type and how it is to be
+    /// accessed as well as the meaning associated with it.
+    pub data: DataRepr,
+}
+
+impl ComplexType {
+    /// Simple new function to create a number stored in a register.
+    pub fn new_scalar(num: number::NumberType) -> ComplexType {
+        ComplexType {
+            mem: MemoryRepr::Register,
+            data: DataRepr::Number(num),
+        }
+    }
+
+    /// Simple new function to create a number stored in a register.
+    pub fn new_ptr() -> ComplexType {
+        ComplexType {
+            mem: MemoryRepr::Register,
+            data: DataRepr::Pointer,
+        }
+    }
+
+    /// Simple new function to create a function pointer.
+    pub fn new_fn(ins: Vec<ComplexTypeId>, outs: Vec<ComplexTypeId>, unwind: CanUnwind) -> ComplexType {
+        ComplexType {
+            mem: MemoryRepr::Register,
+            data: DataRepr::Function(ins, outs, unwind),
+        }
+    }
 }

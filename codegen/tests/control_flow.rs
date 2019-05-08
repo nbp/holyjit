@@ -22,8 +22,8 @@ fn round_odd_up_test() {
     let round_odd_up_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_i32 = bld.ctx().add_type(ComplexType::Scalar(NumberType::I32));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_i32], vec![t_i32], CanUnwind(true)));
+        let t_i32 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::I32));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_i32], vec![t_i32], CanUnwind(true)));
         bld.set_signature(t_sig);
         let s0 = bld.create_sequence(); // test x % 2 == 0
         let s1 = bld.create_sequence(); // x += 1
@@ -74,8 +74,8 @@ fn sum_loop_test() {
     let sum_unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_u64 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U64));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![t_u64], vec![t_u64], CanUnwind(true)));
+        let t_u64 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U64));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![t_u64], vec![t_u64], CanUnwind(true)));
         let i = bld.new_var();
         let accu = bld.new_var();
 

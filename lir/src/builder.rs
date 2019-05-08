@@ -7,7 +7,7 @@ use std::mem::{align_of, size_of};
 use unit::{Unit, UnitId};
 use data_flow::{Instruction, Opcode, Value};
 use control_flow::{Sequence, SequenceIndex, SuccessorIndex};
-use types::{ComplexType, ComplexTypeId};
+use types::{DataRepr, ComplexType, ComplexTypeId};
 use context;
 use bitset::BitSet;
 
@@ -156,8 +156,8 @@ impl<'a> UnitBuilder<'a> {
     pub fn set_signature(&mut self, signature: ComplexTypeId) {
         self.unit.sig = signature;
         let ty = self.ctx.get_type(signature);
-        let (ins, _outs) = match ty {
-            &ComplexType::Function(ref ins, ref outs, _) => (ins, outs),
+        let (ins, _outs) = match ty.data {
+            DataRepr::Function(ref ins, ref outs, _) => (ins, outs),
             _ => panic!("Unit signatures are expected to be a Function.")
         };
         self.unit.inputs = ins.iter().map(|_| Value::dummy()).collect();

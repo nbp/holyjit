@@ -24,8 +24,8 @@ fn load_first_static_field() {
     let unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_u8 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U8));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![], vec![t_u8], CanUnwind(true)));
+        let t_u8 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U8));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![], vec![t_u8], CanUnwind(true)));
         let ref0 = bld.ctx().add_typed_ref::<u8>();
         let _ref1 = bld.ctx().add_typed_ref::<&u8>();
         bld.set_signature(t_sig);
@@ -58,9 +58,9 @@ fn load_second_static_field() {
     let unit = {
         let mut bld = UnitBuilder::new(UnitId::Function(0), &mut ctx_bld);
         // Add the function signature.
-        let t_u8 = bld.ctx().add_type(ComplexType::Scalar(NumberType::U8));
-        let t_ptr = bld.ctx().add_type(ComplexType::Scalar(addr_type()));
-        let t_sig = bld.ctx().add_type(ComplexType::Function(vec![], vec![t_u8], CanUnwind(true)));
+        let t_u8 = bld.ctx().add_type(ComplexType::new_scalar(NumberType::U8));
+        let t_ptr = bld.ctx().add_type(ComplexType::new_scalar(addr_type()));
+        let t_sig = bld.ctx().add_type(ComplexType::new_fn(vec![], vec![t_u8], CanUnwind(true)));
         let _ref0 = bld.ctx().add_typed_ref::<u8>();
         let ref1 = bld.ctx().add_typed_ref::<&u8>();
         bld.set_signature(t_sig);
