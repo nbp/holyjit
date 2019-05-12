@@ -7,6 +7,7 @@
 /// Automatically derive a hashing function for each type, to make sure that we
 /// can apply patches to a subset of instructions.
 use std::hash::{Hash, Hasher};
+use std::fmt;
 
 use number;
 use unit;
@@ -414,6 +415,45 @@ impl Value {
     pub fn index(self) -> usize {
         debug_assert!(!self.is_dummy());
         self.index
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.is_dummy() {
+            write!(f, "#(dummy)")
+        } else {
+            write!(f, "#{:x}", self.hash)
+        }
+    }
+}
+
+/// Wrapper type for a Vec<Value> type such that we can implement the Display
+/// trait.
+pub struct VecValue<'a>(pub &'a Vec<Value>);
+impl<'a> fmt::Display for VecValue<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[")?;
+        let mut iter = self.0.iter();
+        if let Some(v) = iter.next() {
+            write!(f, " {}", v)?;
+            while let Some(v) = iter.next() {
+                write!(f,", {}", v)?;
+            }
+            write!(f, " ")?;
+        }
+        write!(f, "]")
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let hash : u64 = self.into();
+        write!(f, "#{:x} = [{:?}](args = {}, deps = {})", hash, self.opcode, VecValue(&self.operands), VecValue(&self.dependencies))?;
+        if let Some(v) = self.replaced_by {
+            write!(f, "{{ replaced_by: {} }}", v)?;
+        }
+        Ok(())
     }
 }
 

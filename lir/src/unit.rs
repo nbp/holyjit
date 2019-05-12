@@ -1,6 +1,7 @@
 use data_flow::{DataFlow, Value};
 use control_flow::ControlFlow;
 use types::ComplexTypeId;
+use std::fmt;
 
 /// A LIR Unit is a connected set of basic blocks with an entry and exit blocks.
 /// This might correspond to a Rust function, a subset of a Rust function which
@@ -65,5 +66,45 @@ impl Unit {
             inputs: vec![],
             outputs: vec![],
         }
+    }
+}
+
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use data_flow::VecValue;
+        use control_flow::SequenceIndex;
+        let width = f.width().unwrap_or(0);
+        write!(f, "{e:i$}unit {:?} : {} -> {} {{\n", self.id, VecValue(&self.inputs), VecValue(&self.outputs), e = "", i = width)?;
+        for (index, ref seq) in self.cfg.sequences.iter().enumerate() {
+            write!(f, "{e:i$}Seq {}:\n", index, e = "", i = width * 2)?;
+            for v in seq.sequence.iter() {
+                if v.is_dummy() {
+                    write!(f, "{e:i$}(dummy instruction)\n", e = "", i = width * 3)?;
+                } else {
+                    let ins = &self.dfg.instructions[v.index()];
+                    write!(f, "{e:i$}{}\n", ins, e = "", i = width * 3)?;
+                }
+            }
+            if seq.control.is_dummy() {
+                write!(f, "{e:i$}(dummy control instruction)\n\n", e = "", i = width * 3)?;
+            } else {
+                let ins = &self.dfg.instructions[seq.control.index()];
+                write!(f, "{e:i$}{}\n\n", ins, e = "", i = width * 3)?;
+            }
+            for &(val, succ) in seq.targets.iter() {
+                let SequenceIndex(seq) = seq.successors[succ.0];
+                write!(f, "{e:i$}{} -> Seq {}\n", val, seq, e = "", i = width * 3)?;
+            }
+            if let Some(succ) = seq.default {
+                let SequenceIndex(seq) = seq.successors[succ.0];
+                write!(f, "{e:i$}default -> Seq {}\n", seq, e = "", i = width * 3)?;
+            }
+            if let Some(succ) = seq.unwind {
+                let SequenceIndex(seq) = seq.successors[succ.0];
+                write!(f, "{e:i$}unwind -> Seq {}\n", seq, e = "", i = width * 3)?;
+            }
+            write!(f, "\n")?;
+        }
+        write!(f, "{e:i$}}}", e = "", i = width)
     }
 }
