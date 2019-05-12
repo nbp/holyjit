@@ -1,6 +1,6 @@
 #!/bin/sh
 
-debug=true
+debug=false
 
 # CLI: rustc --crate name path/name.rs
 wrap=false;
