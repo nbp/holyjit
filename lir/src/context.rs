@@ -116,16 +116,23 @@ impl Context {
     /// function to panic.
     pub fn set_static_refs<T>(&mut self, refs: &'static T) {
         let refs = refs as *const _ as *const();
-        if self.refs_ptr != ptr::null() {
-            // TODO: Panic with a documented error code, or an explicit message
-            // explaining how to fix this issue.
-            panic!("set_static_refs can only be called once per context.")
-        }
-        if self.expected_refs_size != mem::size_of::<T>() {
-            // TODO: Panic with a documented error code, or an explicit message
-            // explaining how to fix this issue.
-            panic!("set_static_refs called with a tuple of unexpected size.")
-        }
+        // TODO: Panic with a documented error code, or an explicit message
+        // explaining how to fix this issue.
+        assert_eq!(self.refs_ptr, ptr::null(),
+                   "static refs can only be set once per context.");
+        // TODO: Panic with a documented error code, or an explicit message
+        // explaining how to fix this issue.
+        assert_eq!(self.expected_refs_size, mem::size_of::<T>(),
+                   "set_static_refs called with a tuple of unexpected size {}, expected {}.",
+                   mem::size_of::<T>(), self.expected_refs_size);
+        self.refs_ptr = refs;
+    }
+
+    pub unsafe fn set_static_refs_unchecked(&mut self, refs: *const ()) {
+        // TODO: Panic with a documented error code, or an explicit message
+        // explaining how to fix this issue.
+        assert_eq!(self.refs_ptr, ptr::null(),
+                   "static refs can only be set once per context.");
         self.refs_ptr = refs;
     }
 

@@ -6,7 +6,6 @@ use bincode;
 use lir;
 use codegen::{CodeGenerator, JitCode};
 use std::rc::Rc;
-use std::mem;
 
 /// Opaque structure which is used to store the function mapping, and tune
 /// the JIT parameters.
@@ -35,8 +34,7 @@ impl JitContext {
                             return None
                         }
                     };
-                let defs : &'static () = unsafe { mem::transmute(defs) };
-                ctx.set_static_refs(defs);
+                unsafe { ctx.set_static_refs_unchecked(defs) };
                 let mut codegen = CodeGenerator::new();
                 match codegen.compile(&ctx, &unit) {
                     Ok(jit) => {
