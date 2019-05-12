@@ -1,0 +1,17 @@
+[package]
+name = "holyjit_codegen"
+version = "0.0.0"
+authors = [ "Nicolas B. Pierron <nicolas.b.pierron@nbp.name>" ]
+
+[dependencies]
+mmap = "*"
+region = "0.3"
+cranelift-codegen = "0.18"
+cranelift-native = "0.18"
+cranelift-frontend = "0.18"
+holyjit_lir = { path = "../lir" }
+
+[lib]
+name = "holyjit_codegen"
+path = "src/lib.rs"
+

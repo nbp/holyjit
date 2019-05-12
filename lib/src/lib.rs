@@ -26,12 +26,12 @@ extern crate serde_derive;
 extern crate serde;
 extern crate bincode;
 
-pub mod lir;
+extern crate holyjit_lir as lir;
+extern crate holyjit_codegen as codegen;
 mod context;
-mod compile;
 
 pub use context::JitContext;
-pub use compile::JitCode;
+pub use codegen::JitCode;
 
 /// This trait should be implemented by every function that we want to be able to Jit. This trait
 /// implements the Fn trait to make this function callable, and to make it a potential entry point
@@ -58,7 +58,7 @@ impl<Output> FnOnce<()> for Curry0<Output> {
             Curry0::Native(fun) => fun(),
             Curry0::Jit(jit) => {
                 let fun : fn() -> Output = unsafe {
-                    std::mem::transmute(jit.get_fn())
+                    std::mem::transmute(jit.as_ptr())
                 };
                 fun()
             }
@@ -71,7 +71,7 @@ impl<Output> FnMut<()> for Curry0<Output> {
             &mut Curry0::Native(ref mut fun) => fun(),
             &mut Curry0::Jit(ref mut jit) => {
                 let fun : fn() -> Output = unsafe {
-                    std::mem::transmute(jit.get_fn())
+                    std::mem::transmute(jit.as_ptr())
                 };
                 fun()
             }
@@ -84,7 +84,7 @@ impl<Output> Fn<()> for Curry0<Output> {
             &Curry0::Native(ref fun) => fun(),
             &Curry0::Jit(ref jit) => {
                 let fun : fn() -> Output = unsafe {
-                    std::mem::transmute(jit.get_fn())
+                    std::mem::transmute(jit.as_ptr())
                 };
                 fun()
             }
@@ -119,7 +119,7 @@ macro_rules! curry_decl {
                     $name::Native(fun) => curry_call!{ fun => args: ($($arg),*) },
                     $name::Jit(jit) => {
                         let fun : fn($($arg),*) -> $ret = unsafe {
-                            std::mem::transmute(jit.get_fn())
+                            std::mem::transmute(jit.as_ptr())
                         };
                         curry_call!{ fun => args: ($($arg),*) }
                     }
@@ -132,7 +132,7 @@ macro_rules! curry_decl {
                     &mut $name::Native(ref mut fun) => curry_call!{ fun => args: ($($arg),*) },
                     &mut $name::Jit(ref mut jit) => {
                         let fun : fn($($arg),*) -> $ret = unsafe {
-                            std::mem::transmute(jit.get_fn())
+                            std::mem::transmute(jit.as_ptr())
                         };
                         curry_call!{ fun => args: ($($arg),*) }
                     }
@@ -145,7 +145,7 @@ macro_rules! curry_decl {
                     &$name::Native(ref fun) => curry_call!{ fun => args: ($($arg),*) },
                     &$name::Jit(ref jit) => {
                         let fun : fn($($arg),*) -> $ret = unsafe {
-                            std::mem::transmute(jit.get_fn())
+                            std::mem::transmute(jit.as_ptr())
                         };
                         curry_call!{ fun => args: ($($arg),*) }
                     }

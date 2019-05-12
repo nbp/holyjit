@@ -2,13 +2,17 @@
 /// part.  It provides an interface for tuning the JIT compiler parameters
 /// as well as the heuristics for enterring the JIT.
 
-use compile::JitCode;
+use bincode;
+use lir;
+use codegen::{CodeGenerator, JitCode};
 use std::rc::Rc;
 
 /// Opaque structure which is used to store the function mapping, and tune
 /// the JIT parameters.
 pub struct JitContext {
-    code: Option<Rc<JitCode>>
+    // TODO: Storage space for all compiled functions. At the moment only hold a
+    // single compiled function.
+    code: Option<Rc<JitCode>>,
 }
 
 impl JitContext {
@@ -20,7 +24,19 @@ impl JitContext {
             }
             &None => {
                 println!("Did not found JIT Code in the context.\nStart compiling ...");
-                match JitCode::compile(bytes, defs) {
+                // TODO: Move this as part of the JitContext. In the mean time
+                // deserialize the LIR context everytime we start a compilation.
+                let (mut ctx, unit) : (lir::context::Context, lir::unit::Unit) =
+                    match bincode::deserialize(bytes) {
+                        Ok(res) => res,
+                        Err(err) => {
+                            println!("bincode::ErrorKind = {}", err);
+                            return None
+                        }
+                    };
+                unsafe { ctx.set_static_refs_unchecked(defs) };
+                let mut codegen = CodeGenerator::new();
+                match codegen.compile(&ctx, &unit) {
                     Ok(jit) => {
                         let jit = Rc::new(jit);
                         // TODO: Store the Jit code on the context.
@@ -28,7 +44,7 @@ impl JitContext {
                         Some(jit)
                     }
                     Err(e) => {
-                        println!("JIT Compiler Error: {:?}", e);
+                        println!("JIT Codegen Error: {:?}", e);
                         None
                     }
                 }
@@ -39,6 +55,8 @@ impl JitContext {
 
 impl Default for JitContext {
     fn default() -> JitContext {
-        JitContext{ code: None }
+        JitContext{
+            code: None,
+        }
     }
 }
